@@ -20,6 +20,7 @@ from ccwap.utils.paths import (
     extract_session_id_from_path,
     get_project_path_from_file,
     get_project_display_name,
+    is_session_nested_subagent,
 )
 from ccwap.utils.progress import print_status, print_verbose, file_progress
 from ccwap.models.entities import SessionData
@@ -29,7 +30,10 @@ def discover_jsonl_files(claude_projects_path: Path) -> List[Path]:
     """
     Discover all JSONL files including agents and subagents.
 
-    FIXES BUG 8: Explicitly includes agent-*.jsonl and subagents/*.jsonl
+    Searches three locations:
+    1. <project>/*.jsonl - main session and agent files
+    2. <project>/subagents/*.jsonl - legacy subagent location
+    3. <project>/<session-id>/subagents/*.jsonl - subagents nested under session dirs
 
     Args:
         claude_projects_path: Path to ~/.claude/projects/
@@ -50,11 +54,16 @@ def discover_jsonl_files(claude_projects_path: Path) -> List[Path]:
         for jsonl_file in project_dir.glob('*.jsonl'):
             files.append(jsonl_file)
 
-        # Subagent files
+        # Legacy subagent files directly under project
         subagents_dir = project_dir / 'subagents'
         if subagents_dir.exists():
             for jsonl_file in subagents_dir.glob('*.jsonl'):
                 files.append(jsonl_file)
+
+        # Subagent files nested under session directories
+        # Pattern: <project>/<session-id>/subagents/agent-*.jsonl
+        for jsonl_file in project_dir.glob('*/subagents/*.jsonl'):
+            files.append(jsonl_file)
 
     return files
 
@@ -150,31 +159,37 @@ def process_file(
     if not entries:
         return stats
 
-    # Extract session metadata
-    metadata = extract_session_metadata(entries)
+    # For session-nested subagents, skip session upsert to avoid overwriting
+    # the parent session metadata. Tool calls and turns are still inserted
+    # and attributed to the parent session via session_id.
+    is_nested_subagent = is_session_nested_subagent(file_path)
 
-    # Create session object
-    is_agent = file_type in ('agent', 'subagent')
+    if not is_nested_subagent:
+        # Extract session metadata
+        metadata = extract_session_metadata(entries)
 
-    session = SessionData(
-        session_id=session_id,
-        project_path=project_path,
-        project_display=project_display,
-        file_path=str(file_path),
-        first_timestamp=metadata['first_timestamp'],
-        last_timestamp=metadata['last_timestamp'],
-        duration_seconds=metadata['duration_seconds'],
-        cc_version=metadata['cc_version'],
-        git_branch=metadata['git_branch'],
-        cwd=metadata['cwd'],
-        is_agent=is_agent,
-        file_mtime=file_path.stat().st_mtime,
-        file_size=file_path.stat().st_size,
-        models_used=metadata['models_used'],
-    )
+        # Create session object
+        is_agent = file_type in ('agent', 'subagent')
 
-    # Insert session
-    upsert_session(conn, session)
+        session = SessionData(
+            session_id=session_id,
+            project_path=project_path,
+            project_display=project_display,
+            file_path=str(file_path),
+            first_timestamp=metadata['first_timestamp'],
+            last_timestamp=metadata['last_timestamp'],
+            duration_seconds=metadata['duration_seconds'],
+            cc_version=metadata['cc_version'],
+            git_branch=metadata['git_branch'],
+            cwd=metadata['cwd'],
+            is_agent=is_agent,
+            file_mtime=file_path.stat().st_mtime,
+            file_size=file_path.stat().st_size,
+            models_used=metadata['models_used'],
+        )
+
+        # Insert session
+        upsert_session(conn, session)
 
     # Insert turns with cost calculation
     inserted = upsert_turns_batch(conn, turns, config)

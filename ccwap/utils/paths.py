@@ -49,6 +49,26 @@ def get_project_display_name(project_path: str) -> str:
     return decoded
 
 
+def is_session_nested_subagent(file_path: Path) -> bool:
+    """
+    Check if a file is a subagent nested under a session directory.
+
+    Pattern: <project>/<session-id>/subagents/agent-*.jsonl
+    These files should have their tool calls attributed to the parent session
+    and should NOT overwrite the parent session metadata.
+
+    Args:
+        file_path: Path to the JSONL file
+
+    Returns:
+        True if this is a session-nested subagent file
+    """
+    if file_path.parent.name != 'subagents':
+        return False
+    parent_dir = file_path.parent.parent.name
+    return '-' in parent_dir and len(parent_dir) > 30
+
+
 def detect_file_type(file_path: Path) -> str:
     """
     Detect whether a JSONL file is main session, agent, or subagent.
@@ -81,6 +101,8 @@ def extract_session_id_from_path(file_path: Path) -> str:
 
     Main sessions: {uuid}.jsonl
     Agent sessions: agent-{uuid}.jsonl
+    Session subagents: <session-id>/subagents/agent-{agent-id}.jsonl
+        -> returns <session-id> (parent session) so tool calls are attributed correctly
 
     Args:
         file_path: Path to the JSONL file
@@ -91,6 +113,13 @@ def extract_session_id_from_path(file_path: Path) -> str:
     name = file_path.stem  # filename without extension
 
     if name.startswith('agent-'):
+        # Check if this is a subagent nested under a session directory
+        # Pattern: <project>/<session-id>/subagents/agent-xxx.jsonl
+        if file_path.parent.name == 'subagents':
+            parent_dir = file_path.parent.parent.name
+            # If parent dir looks like a UUID session ID (contains hyphens, not a project path)
+            if '-' in parent_dir and len(parent_dir) > 30:
+                return parent_dir  # Use parent session ID
         return name[6:]  # Remove 'agent-' prefix
 
     return name
@@ -100,6 +129,11 @@ def get_project_path_from_file(file_path: Path) -> str:
     """
     Get the project path (encoded directory name) from a JSONL file path.
 
+    Handles three layouts:
+    - <project>/<session>.jsonl -> <project>
+    - <project>/subagents/<agent>.jsonl -> <project>
+    - <project>/<session-id>/subagents/<agent>.jsonl -> <project>
+
     Args:
         file_path: Path to a JSONL file
 
@@ -108,6 +142,10 @@ def get_project_path_from_file(file_path: Path) -> str:
     """
     # Handle subagents directory
     if file_path.parent.name == 'subagents':
-        return file_path.parent.parent.name
+        grandparent = file_path.parent.parent
+        # Check if grandparent is a session dir (UUID-like) nested under the project dir
+        if '-' in grandparent.name and len(grandparent.name) > 30:
+            return grandparent.parent.name  # Go up one more level to project
+        return grandparent.name
 
     return file_path.parent.name
