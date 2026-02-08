@@ -58,3 +58,6 @@ snowflake_sync.cpython-*.pyc
 
 # Windows reserved names
 nul
+
+# Large data cache files
+data/
