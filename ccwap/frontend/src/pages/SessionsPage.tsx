@@ -1,35 +1,164 @@
 import { useState, useCallback } from 'react'
-import { Link, useSearchParams } from 'react-router'
-import { ChevronLeft, ChevronRight, ArrowLeft } from 'lucide-react'
-import { PageLayout } from '@/components/PageLayout'
+import { Link, useSearchParams, useNavigate } from 'react-router'
+import type { ColumnDef } from '@tanstack/react-table'
+import { PageLayout } from '@/components/layout/PageLayout'
+import type { BreadcrumbItem } from '@/components/layout/Breadcrumbs'
+import { DataTable } from '@/components/composite/DataTable'
+import { ErrorState } from '@/components/composite/ErrorState'
+import { ExportDropdown } from '@/components/composite/ExportDropdown'
+import { Badge } from '@/components/ui/badge'
 import { useDateRange } from '@/hooks/useDateRange'
 import { useSessions } from '@/api/sessions'
-import { LoadingState } from '@/components/ui/LoadingState'
-import { ErrorState } from '@/components/ui/ErrorState'
-import { EmptyState } from '@/components/ui/EmptyState'
 import { formatCurrency, formatNumber, formatDuration } from '@/lib/utils'
-import { ExportDropdown } from '@/components/ExportDropdown'
+
+interface SessionListItem {
+  session_id: string
+  project_path: string
+  project_display: string | null
+  first_timestamp: string | null
+  last_timestamp: string | null
+  duration_seconds: number
+  cost: number
+  turns: number
+  user_turns: number
+  tool_calls: number
+  errors: number
+  is_agent: boolean
+  cc_version: string | null
+  git_branch: string | null
+  model: string | null
+}
+
+const sessionColumns: ColumnDef<SessionListItem, unknown>[] = [
+  {
+    id: 'session',
+    header: 'Session',
+    cell: ({ row }) => {
+      const s = row.original
+      return (
+        <div>
+          <Link
+            to={`/sessions/${s.session_id}`}
+            className="text-primary hover:underline font-mono text-xs"
+            onClick={e => e.stopPropagation()}
+          >
+            {s.session_id.slice(0, 12)}...
+          </Link>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {s.first_timestamp
+              ? new Date(s.first_timestamp).toLocaleString()
+              : 'N/A'}
+          </div>
+          <div className="flex gap-1 mt-0.5">
+            {s.is_agent && (
+              <Badge variant="secondary" className="bg-purple-500/20 text-purple-400 text-[10px] px-1 py-0.5">
+                agent
+              </Badge>
+            )}
+          </div>
+        </div>
+      )
+    },
+  },
+  {
+    accessorKey: 'project_display',
+    header: 'Project',
+    cell: ({ row }) => {
+      const s = row.original
+      return (
+        <span className="truncate block max-w-[200px]">
+          {s.project_display || s.project_path}
+        </span>
+      )
+    },
+  },
+  {
+    accessorKey: 'cost',
+    header: () => <div className="text-right">Cost</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono whitespace-nowrap">{formatCurrency(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'duration_seconds',
+    header: () => <div className="text-right">Duration</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono whitespace-nowrap">{formatDuration(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'turns',
+    header: () => <div className="text-right">Turns</div>,
+    cell: ({ row }) => {
+      const s = row.original
+      return (
+        <div className="text-right font-mono">
+          {formatNumber(s.turns)}
+          <span className="text-muted-foreground text-xs ml-1" title="user turns">
+            ({s.user_turns} user)
+          </span>
+        </div>
+      )
+    },
+  },
+  {
+    accessorKey: 'tool_calls',
+    header: () => <div className="text-right">Tools</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatNumber(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'errors',
+    header: () => <div className="text-right">Errors</div>,
+    cell: ({ getValue }) => {
+      const v = getValue<number>()
+      return (
+        <div className="text-right font-mono">
+          <span className={v > 0 ? 'text-amber-400' : ''}>{v}</span>
+        </div>
+      )
+    },
+  },
+  {
+    accessorKey: 'model',
+    header: 'Model',
+    cell: ({ getValue }) => (
+      <span className="font-mono text-xs truncate block max-w-[120px]">{getValue<string>() || 'N/A'}</span>
+    ),
+  },
+  {
+    accessorKey: 'git_branch',
+    header: 'Branch',
+    cell: ({ getValue }) => (
+      <span className="font-mono text-xs truncate block max-w-[120px]">{getValue<string>() || ''}</span>
+    ),
+  },
+]
 
 export default function SessionsPage() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const project = searchParams.get('project') || undefined
   const { dateRange } = useDateRange()
   const [page, setPage] = useState(1)
 
   const { data, isLoading, error } = useSessions(dateRange, project, page)
 
-  const handlePrev = useCallback(() => setPage(p => Math.max(1, p - 1)), [])
-  const handleNext = useCallback(
-    () => setPage(p => Math.min(data?.pagination.total_pages ?? p, p + 1)),
-    [data],
-  )
+  const handlePageChange = useCallback((pageIndex: number) => {
+    setPage(pageIndex + 1) // DataTable uses 0-indexed, API uses 1-indexed
+  }, [])
 
   const projectDisplay = project?.replace(/^.*--/, '').replace(/-/g, '/') || null
+
+  const breadcrumbs: BreadcrumbItem[] | undefined = project
+    ? [
+        { label: 'Projects', href: '/projects' },
+        { label: projectDisplay || 'Project' },
+      ]
+    : undefined
+
+  if (error) return <ErrorState message={error.message} />
 
   return (
     <PageLayout
       title="Sessions"
       subtitle={projectDisplay ? `Filtered by ${projectDisplay}` : 'All sessions'}
+      breadcrumbs={breadcrumbs}
       actions={
         data?.sessions && (
           <ExportDropdown
@@ -53,129 +182,19 @@ export default function SessionsPage() {
         )
       }
     >
-      {/* Back link */}
-      {project && (
-        <Link
-          to="/projects"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back to projects
-        </Link>
-      )}
-
-      {isLoading ? (
-        <LoadingState message="Loading sessions..." />
-      ) : error ? (
-        <ErrorState message={error.message} />
-      ) : !data || data.sessions.length === 0 ? (
-        <EmptyState message="No sessions found" />
-      ) : (
-        <>
-          <div className="rounded-lg border border-border overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/50 border-b border-border">
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Session</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Project</th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">Cost</th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">Duration</th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">Turns</th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">Tools</th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">Errors</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Model</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Branch</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.sessions.map(s => (
-                    <tr
-                      key={s.session_id}
-                      className="border-b border-border hover:bg-accent/10 transition-colors"
-                    >
-                      <td className="px-4 py-3">
-                        <Link
-                          to={`/sessions/${s.session_id}`}
-                          className="text-primary hover:underline font-mono text-xs"
-                        >
-                          {s.session_id.slice(0, 12)}...
-                        </Link>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          {s.first_timestamp
-                            ? new Date(s.first_timestamp).toLocaleString()
-                            : 'N/A'}
-                        </div>
-                        <div className="flex gap-1 mt-0.5">
-                          {s.is_agent && (
-                            <span className="text-[10px] bg-purple-500/20 text-purple-400 px-1 py-0.5 rounded">
-                              agent
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 truncate max-w-[200px]">
-                        {s.project_display || s.project_path}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">
-                        {formatCurrency(s.cost)}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">
-                        {formatDuration(s.duration_seconds)}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-right">
-                        {formatNumber(s.turns)}
-                        <span className="text-muted-foreground text-xs ml-1" title="user turns">
-                          ({s.user_turns} user)
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-right">
-                        {formatNumber(s.tool_calls)}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-right">
-                        <span className={s.errors > 0 ? 'text-amber-400' : ''}>
-                          {s.errors}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs truncate max-w-[120px]">
-                        {s.model || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs truncate max-w-[120px]">
-                        {s.git_branch || ''}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Pagination */}
-          {data.pagination.total_pages > 1 && (
-            <div className="flex items-center justify-between mt-4">
-              <span className="text-sm text-muted-foreground">
-                Page {data.pagination.page} of {data.pagination.total_pages} (
-                {data.pagination.total_count} sessions)
-              </span>
-              <div className="flex gap-2">
-                <button
-                  onClick={handlePrev}
-                  disabled={page <= 1}
-                  className="p-2 rounded border border-border hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={handleNext}
-                  disabled={page >= data.pagination.total_pages}
-                  className="p-2 rounded border border-border hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
+      <DataTable
+        columns={sessionColumns}
+        data={(data?.sessions ?? []) as SessionListItem[]}
+        isLoading={isLoading}
+        emptyMessage="No sessions found"
+        pagination={data ? {
+          pageIndex: page - 1,
+          pageSize: data.pagination.limit,
+          pageCount: data.pagination.total_pages,
+          totalRows: data.pagination.total_count,
+          onPageChange: handlePageChange,
+        } : undefined}
+      />
     </PageLayout>
   )
 }

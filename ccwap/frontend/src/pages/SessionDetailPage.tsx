@@ -1,22 +1,27 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
-import { useParams, Link } from 'react-router'
-import { ArrowLeft, X } from 'lucide-react'
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import { useParams } from 'react-router'
+import { X } from 'lucide-react'
+import { PieChart, Pie, Cell, Tooltip } from 'recharts'
 import { TokenWaterfall } from '@/components/charts/TokenWaterfall'
 import type { TokenWaterfallTurn } from '@/components/charts/TokenWaterfall'
-import { PageLayout } from '@/components/PageLayout'
+import { PageLayout } from '@/components/layout/PageLayout'
 import { useSessionReplay } from '@/api/sessions'
 import type { ReplayTurn, ToolCallDetail } from '@/api/sessions'
-import { LoadingState } from '@/components/ui/LoadingState'
-import { ErrorState } from '@/components/ui/ErrorState'
-import { MetricCard } from '@/components/ui/MetricCard'
+import { ErrorState } from '@/components/composite/ErrorState'
+import { MetricCard } from '@/components/composite/MetricCard'
+import { MetricCardGrid } from '@/components/composite/MetricCardGrid'
+import { ChartContainer } from '@/components/composite/ChartContainer'
+import { ExportDropdown } from '@/components/composite/ExportDropdown'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
+import { Skeleton } from '@/components/ui/skeleton'
+import { TOOLTIP_STYLE, CHART_COLORS } from '@/lib/chartConfig'
 import { formatCurrency, formatNumber, formatDuration, cn } from '@/lib/utils'
-import { ExportDropdown } from '@/components/ExportDropdown'
 
-const CHART_COLORS = [
-  'var(--color-chart-1)', 'var(--color-chart-2)', 'var(--color-chart-3)',
-  'var(--color-chart-4)', 'var(--color-chart-5)',
-]
 const MIN_BLOCK_WIDTH = 24
 const MAX_BLOCK_WIDTH = 200
 
@@ -105,67 +110,78 @@ function CostOverlayLine({ turns, blockWidths, containerWidth }: {
 
 function TurnDetailPanel({ turn, onClose }: { turn: ReplayTurn; onClose: () => void }) {
   return (
-    <div className="w-96 border-l border-border bg-card p-4 overflow-y-auto">
-      <div className="flex items-center justify-between mb-4">
+    <div className="w-96 border-l border-border bg-card flex flex-col">
+      <div className="flex items-center justify-between p-4 pb-2">
         <h3 className="font-medium">Turn Detail</h3>
-        <button onClick={onClose} className="p-1 rounded hover:bg-accent"><X className="h-4 w-4" /></button>
+        <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7">
+          <X className="h-4 w-4" />
+        </Button>
       </div>
+      <ScrollArea className="flex-1 px-4 pb-4">
+        <div className="space-y-3 text-sm">
+          <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>{turn.entry_type}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Model</span><span className="font-mono">{turn.model || 'N/A'}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Cost</span><span className="font-mono">{formatCurrency(turn.cost)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Cumulative</span><span className="font-mono">{formatCurrency(turn.cumulative_cost)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Stop Reason</span><span>{turn.stop_reason || 'N/A'}</span></div>
+          {turn.timestamp && (
+            <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span>{new Date(turn.timestamp).toLocaleTimeString()}</span></div>
+          )}
 
-      <div className="space-y-3 text-sm">
-        <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>{turn.entry_type}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Model</span><span className="font-mono">{turn.model || 'N/A'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Cost</span><span className="font-mono">{formatCurrency(turn.cost)}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Cumulative</span><span className="font-mono">{formatCurrency(turn.cumulative_cost)}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Stop Reason</span><span>{turn.stop_reason || 'N/A'}</span></div>
-        {turn.timestamp && (
-          <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span>{new Date(turn.timestamp).toLocaleTimeString()}</span></div>
-        )}
+          <Separator />
 
-        <div className="border-t border-border pt-3">
-          <h4 className="font-medium text-muted-foreground mb-2">Tokens</h4>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex justify-between"><span className="text-muted-foreground">Input</span><span className="font-mono">{formatNumber(turn.input_tokens)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Output</span><span className="font-mono">{formatNumber(turn.output_tokens)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Cache Read</span><span className="font-mono">{formatNumber(turn.cache_read_tokens)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Cache Write</span><span className="font-mono">{formatNumber(turn.cache_write_tokens)}</span></div>
-          </div>
-        </div>
-
-        {turn.thinking_chars > 0 && (
-          <div className="flex justify-between"><span className="text-muted-foreground">Thinking</span><span className="font-mono">{formatNumber(turn.thinking_chars)} chars</span></div>
-        )}
-
-        {turn.user_prompt_preview && (
-          <div className="border-t border-border pt-3">
-            <h4 className="font-medium text-muted-foreground mb-2">User Prompt</h4>
-            <p className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap break-words">{turn.user_prompt_preview}</p>
-          </div>
-        )}
-
-        {turn.tool_calls.length > 0 && (
-          <div className="border-t border-border pt-3">
-            <h4 className="font-medium text-muted-foreground mb-2">Tool Calls ({turn.tool_calls.length})</h4>
-            <div className="space-y-2">
-              {turn.tool_calls.map((tc: ToolCallDetail, i: number) => (
-                <div key={i} className={cn("p-2 rounded text-xs", tc.success ? "bg-muted/50" : "bg-red-500/10 border border-red-500/30")}>
-                  <div className="flex justify-between">
-                    <span className="font-medium">{tc.tool_name}</span>
-                    {!tc.success && <span className="text-red-400 text-[10px]">FAILED</span>}
-                  </div>
-                  {tc.file_path && <div className="text-muted-foreground truncate mt-0.5">{tc.file_path}</div>}
-                  {tc.loc_written > 0 && <div className="text-muted-foreground mt-0.5">+{tc.lines_added}/-{tc.lines_deleted} ({tc.loc_written} LOC)</div>}
-                  {tc.error_message && <div className="text-red-400 mt-1 break-words">{tc.error_message}</div>}
-                </div>
-              ))}
+          <div>
+            <h4 className="font-medium text-muted-foreground mb-2">Tokens</h4>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex justify-between"><span className="text-muted-foreground">Input</span><span className="font-mono">{formatNumber(turn.input_tokens)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Output</span><span className="font-mono">{formatNumber(turn.output_tokens)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Cache Read</span><span className="font-mono">{formatNumber(turn.cache_read_tokens)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Cache Write</span><span className="font-mono">{formatNumber(turn.cache_write_tokens)}</span></div>
             </div>
           </div>
-        )}
 
-        <div className="flex gap-1 mt-2">
-          {turn.is_sidechain && <span className="text-xs bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded">sidechain</span>}
-          {turn.is_meta && <span className="text-xs bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded">meta</span>}
+          {turn.thinking_chars > 0 && (
+            <div className="flex justify-between"><span className="text-muted-foreground">Thinking</span><span className="font-mono">{formatNumber(turn.thinking_chars)} chars</span></div>
+          )}
+
+          {turn.user_prompt_preview && (
+            <>
+              <Separator />
+              <div>
+                <h4 className="font-medium text-muted-foreground mb-2">User Prompt</h4>
+                <p className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap break-words">{turn.user_prompt_preview}</p>
+              </div>
+            </>
+          )}
+
+          {turn.tool_calls.length > 0 && (
+            <>
+              <Separator />
+              <div>
+                <h4 className="font-medium text-muted-foreground mb-2">Tool Calls ({turn.tool_calls.length})</h4>
+                <div className="space-y-2">
+                  {turn.tool_calls.map((tc: ToolCallDetail, i: number) => (
+                    <div key={i} className={cn("p-2 rounded text-xs", tc.success ? "bg-muted/50" : "bg-red-500/10 border border-red-500/30")}>
+                      <div className="flex justify-between">
+                        <span className="font-medium">{tc.tool_name}</span>
+                        {!tc.success && <Badge variant="destructive" className="text-[10px] px-1 py-0 h-4">FAILED</Badge>}
+                      </div>
+                      {tc.file_path && <div className="text-muted-foreground truncate mt-0.5">{tc.file_path}</div>}
+                      {tc.loc_written > 0 && <div className="text-muted-foreground mt-0.5">+{tc.lines_added}/-{tc.lines_deleted} ({tc.loc_written} LOC)</div>}
+                      {tc.error_message && <div className="text-red-400 mt-1 break-words">{tc.error_message}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="flex gap-1 mt-2">
+            {turn.is_sidechain && <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-xs">sidechain</Badge>}
+            {turn.is_meta && <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-xs">meta</Badge>}
+          </div>
         </div>
-      </div>
+      </ScrollArea>
     </div>
   )
 }
@@ -174,7 +190,6 @@ export default function SessionDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { data, isLoading, error } = useSessionReplay(id!)
   const [selectedTurn, setSelectedTurn] = useState<number | null>(null)
-  const [chartView, setChartView] = useState<'cost' | 'tokens'>('cost')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const blockWidths = useMemo(() => {
@@ -215,7 +230,19 @@ export default function SessionDetailPage() {
     setSelectedTurn(prev => prev === index ? null : index)
   }, [])
 
-  if (isLoading) return <LoadingState message="Loading session replay..." />
+  if (isLoading) {
+    return (
+      <PageLayout
+        title="Session Detail"
+        subtitle="Turn-by-turn session replay"
+        breadcrumbs={[{ label: 'Sessions', href: '/sessions' }, { label: '...' }]}
+      >
+        <MetricCardGrid skeleton count={5} className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 mb-6" />
+        <Skeleton className="h-32 w-full mb-6" />
+        <Skeleton className="h-64 w-full" />
+      </PageLayout>
+    )
+  }
   if (error) return <ErrorState message={error.message} />
   if (!data) return null
 
@@ -225,8 +252,12 @@ export default function SessionDetailPage() {
     <PageLayout
       title="Session Detail"
       subtitle="Turn-by-turn session replay"
+      breadcrumbs={[
+        { label: 'Sessions', href: '/sessions' },
+        { label: id?.slice(0, 12) ?? '' },
+      ]}
       actions={
-        data && <ExportDropdown
+        <ExportDropdown
           page={`session-${id}`}
           getData={() => (data?.turns || []).map((t, i) => ({
             turn: i + 1,
@@ -244,143 +275,140 @@ export default function SessionDetailPage() {
         />
       }
     >
-      {/* Back link */}
-      <Link to="/projects" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
-        <ArrowLeft className="h-4 w-4" /> Back to projects
-      </Link>
-
       {/* Session Header */}
-      <div className="rounded-lg border border-border bg-card p-4 mb-6">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          <span className="font-medium text-lg">{data.project_display || data.project_path}</span>
-          {data.is_agent && <span className="text-xs bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded">agent</span>}
-          {data.cc_version && <span className="text-muted-foreground">v{data.cc_version}</span>}
-          {data.git_branch && <span className="text-muted-foreground font-mono">{data.git_branch}</span>}
-        </div>
-        <div className="flex flex-wrap gap-4 mt-2 text-xs text-muted-foreground">
-          {data.first_timestamp && <span>{new Date(data.first_timestamp).toLocaleString()}</span>}
-          <span className="font-mono">{data.session_id.slice(0, 12)}...</span>
-        </div>
-      </div>
+      <Card className="mb-6">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            <span className="font-medium text-lg">{data.project_display || data.project_path}</span>
+            {data.is_agent && <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">agent</Badge>}
+            {data.cc_version && <span className="text-muted-foreground">v{data.cc_version}</span>}
+            {data.git_branch && <span className="text-muted-foreground font-mono">{data.git_branch}</span>}
+          </div>
+          <div className="flex flex-wrap gap-4 mt-2 text-xs text-muted-foreground">
+            {data.first_timestamp && <span>{new Date(data.first_timestamp).toLocaleString()}</span>}
+            <span className="font-mono">{data.session_id.slice(0, 12)}...</span>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+      <MetricCardGrid className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 mb-6">
         <MetricCard title="Cost" value={formatCurrency(data.total_cost)} />
         <MetricCard title="Duration" value={formatDuration(data.duration_seconds)} />
         <MetricCard title="Turns" value={formatNumber(data.total_turns)} subtitle={`${data.total_user_turns} user`} />
         <MetricCard title="Tool Calls" value={formatNumber(data.total_tool_calls)} />
-        <MetricCard title="Errors" value={formatNumber(data.total_errors)} className={data.total_errors > 0 ? 'border-amber-500/50 bg-amber-500/10' : undefined} />
-      </div>
+        <MetricCard
+          title="Errors"
+          value={formatNumber(data.total_errors)}
+          className={data.total_errors > 0 ? 'border-amber-500/50 bg-amber-500/10' : undefined}
+        />
+      </MetricCardGrid>
 
       <div className="flex gap-6">
         {/* Main content */}
         <div className="flex-1 min-w-0 space-y-6">
           {/* Timeline Scrubber */}
-          <div className="rounded-lg border border-border bg-card p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-muted-foreground">Timeline</h3>
-              <div className="flex gap-3 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Error</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" /> Truncation</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" /> Sidechain</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-500" /> Meta</span>
+          <Card>
+            <CardHeader className="pb-3 pt-4 px-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Timeline</CardTitle>
+                <div className="flex gap-3 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Error</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" /> Truncation</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" /> Sidechain</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-500" /> Meta</span>
+                </div>
               </div>
-            </div>
-            <div ref={scrollRef} className="overflow-x-auto relative" style={{ minHeight: '80px' }}>
-              <div className="relative" style={{ width: `${containerWidth}px`, minWidth: '100%' }}>
-                <CostOverlayLine turns={data.turns} blockWidths={blockWidths} containerWidth={containerWidth} />
-                <div className="flex gap-1 relative z-10">
-                  {data.turns.map((turn, i) => (
-                    <TurnBlock
-                      key={turn.uuid}
-                      turn={turn}
-                      width={blockWidths[i]}
-                      isSelected={selectedTurn === i}
-                      onClick={() => handleTurnClick(i)}
-                    />
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              <div ref={scrollRef} className="overflow-x-auto relative" style={{ minHeight: '80px' }}>
+                <div className="relative" style={{ width: `${containerWidth}px`, minWidth: '100%' }}>
+                  <CostOverlayLine turns={data.turns} blockWidths={blockWidths} containerWidth={containerWidth} />
+                  <div className="flex gap-1 relative z-10">
+                    {data.turns.map((turn, i) => (
+                      <TurnBlock
+                        key={turn.uuid}
+                        turn={turn}
+                        width={blockWidths[i]}
+                        isSelected={selectedTurn === i}
+                        onClick={() => handleTurnClick(i)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Chart Tabs */}
+          <Tabs defaultValue="cost">
+            <TabsList>
+              <TabsTrigger value="cost">Cost Breakdown</TabsTrigger>
+              <TabsTrigger value="tokens">Token Waterfall</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="cost">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Cost by Model */}
+                {Object.keys(data.cost_by_model).length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-3 pt-4 px-4">
+                      <CardTitle className="text-sm font-medium text-muted-foreground">Cost by Model</CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-4 pb-4">
+                      <div className="space-y-2">
+                        {Object.entries(data.cost_by_model).sort((a, b) => b[1] - a[1]).map(([model, cost]) => (
+                          <div key={model} className="flex justify-between text-sm">
+                            <span className="truncate font-mono">{model}</span>
+                            <span className="font-mono shrink-0 ml-2">{formatCurrency(cost)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Tool Distribution */}
+                <ChartContainer
+                  title="Tool Distribution"
+                  height={192}
+                  isEmpty={toolDistData.length === 0}
+                  emptyMessage="No tool data"
+                >
+                  <PieChart>
+                    <Pie data={toolDistData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} strokeWidth={0}>
+                      {toolDistData.map((_, i) => (
+                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  </PieChart>
+                </ChartContainer>
+              </div>
+              {/* Tool Distribution Legend (outside ChartContainer since it wraps in ResponsiveContainer) */}
+              {toolDistData.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {toolDistData.map((d, i) => (
+                    <span key={d.name} className="text-[10px] flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
+                      {d.name} ({d.value})
+                    </span>
                   ))}
                 </div>
-              </div>
-            </div>
-          </div>
+              )}
+            </TabsContent>
 
-          {/* View Toggle */}
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1 w-fit">
-            <button
-              onClick={() => setChartView('cost')}
-              className={cn(
-                "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-                chartView === 'cost'
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-              )}
-            >
-              Cost Breakdown
-            </button>
-            <button
-              onClick={() => setChartView('tokens')}
-              className={cn(
-                "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-                chartView === 'tokens'
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-              )}
-            >
-              Token Waterfall
-            </button>
-          </div>
-
-          {/* Charts row */}
-          {chartView === 'cost' ? (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Cost by Model */}
-              {Object.keys(data.cost_by_model).length > 0 && (
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <h3 className="text-sm font-medium text-muted-foreground mb-3">Cost by Model</h3>
-                  <div className="space-y-2">
-                    {Object.entries(data.cost_by_model).sort((a, b) => b[1] - a[1]).map(([model, cost]) => (
-                      <div key={model} className="flex justify-between text-sm">
-                        <span className="truncate font-mono">{model}</span>
-                        <span className="font-mono shrink-0 ml-2">{formatCurrency(cost)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Tool Distribution */}
-              {toolDistData.length > 0 && (
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <h3 className="text-sm font-medium text-muted-foreground mb-3">Tool Distribution</h3>
-                  <div className="h-48">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={toolDistData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} strokeWidth={0}>
-                          {toolDistData.map((_, i) => (
-                            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip contentStyle={{ backgroundColor: 'var(--color-card)', color: 'var(--color-card-foreground)', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '12px' }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {toolDistData.map((d, i) => (
-                      <span key={d.name} className="text-[10px] flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
-                        {d.name} ({d.value})
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-border bg-card p-4">
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">Token Breakdown per Turn</h3>
-              <TokenWaterfall turns={waterfallData} />
-            </div>
-          )}
+            <TabsContent value="tokens">
+              <Card>
+                <CardHeader className="pb-3 pt-4 px-4">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Token Breakdown per Turn</CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 pb-4">
+                  <TokenWaterfall turns={waterfallData} />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
 
         {/* Side Panel */}

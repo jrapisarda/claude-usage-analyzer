@@ -1,12 +1,14 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useDateRange } from '@/hooks/useDateRange'
 import { useHeatmap } from '@/api/heatmap'
-import { PageLayout } from '@/components/PageLayout'
-import { MetricCard } from '@/components/ui/MetricCard'
-import { ChartCard } from '@/components/ui/ChartCard'
+import { PageLayout } from '@/components/layout/PageLayout'
+import { MetricCard } from '@/components/composite/MetricCard'
+import { MetricCardGrid } from '@/components/composite/MetricCardGrid'
+import { ErrorState } from '@/components/composite/ErrorState'
+import { ExportDropdown } from '@/components/composite/ExportDropdown'
 import { HeatmapGrid, type HeatmapDataPoint } from '@/components/charts/HeatmapGrid'
-import { LoadingState } from '@/components/ui/LoadingState'
-import { ErrorState } from '@/components/ui/ErrorState'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatNumber, formatCurrency } from '@/lib/utils'
 
 const METRICS = ['sessions', 'cost', 'loc', 'tool_calls'] as const
@@ -25,7 +27,7 @@ const HOURS = Array.from({ length: 24 }, (_, i) => `${i}`)
 export default function HeatmapPage() {
   const { dateRange } = useDateRange()
   const [metric, setMetric] = useState<Metric>('sessions')
-  const { data, isLoading, error } = useHeatmap(dateRange, metric)
+  const { data, isLoading, error, refetch } = useHeatmap(dateRange, metric)
 
   const formatValue = useMemo(
     () => metric === 'cost' ? (v: number) => formatCurrency(v) : (v: number) => formatNumber(v),
@@ -57,48 +59,73 @@ export default function HeatmapPage() {
     return { total: t, peakDay: pd, peakHour: ph, peakVal: pv }
   }, [data])
 
-  if (isLoading) return <LoadingState message="Loading heatmap..." />
-  if (error) return <ErrorState message={error.message} />
-  if (!data) return null
+  const getExportData = useCallback(() => {
+    if (!data) return []
+    return data.cells.map(c => ({
+      day: DAYS[c.day] || c.day,
+      hour: c.hour,
+      value: c.value,
+      metric,
+    }))
+  }, [data, metric])
+
+  if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />
 
   return (
-    <PageLayout title="Activity Heatmap" subtitle="Hourly activity patterns across days of the week">
+    <PageLayout
+      title="Activity Heatmap"
+      subtitle="Hourly activity patterns across days of the week"
+      actions={
+        <ExportDropdown page="heatmap" getData={getExportData} />
+      }
+    >
       {/* Metric toggle */}
-      <div className="flex gap-1 mb-6">
-        {METRICS.map(m => (
-          <button
-            key={m}
-            onClick={() => setMetric(m)}
-            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-              m === metric
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-accent'
-            }`}
-          >
-            {METRIC_LABELS[m]}
-          </button>
-        ))}
-      </div>
+      <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)} className="mb-6">
+        <TabsList>
+          {METRICS.map(m => (
+            <TabsTrigger key={m} value={m}>
+              {METRIC_LABELS[m]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
-      <ChartCard title={`${METRIC_LABELS[metric]} by Day & Hour`}>
-        <HeatmapGrid
-          data={gridData}
-          rowLabels={DAYS}
-          colLabels={HOURS}
-          maxValue={data.max_value}
-          formatValue={formatValue}
-          formatTooltip={(row, col, value) =>
-            `${row} ${col}:00 - ${formatValue(value)}`
-          }
-        />
-      </ChartCard>
+      <Card className="mb-4">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            {METRIC_LABELS[metric]} by Day & Hour
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center h-48">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : data ? (
+            <HeatmapGrid
+              data={gridData}
+              rowLabels={DAYS}
+              colLabels={HOURS}
+              maxValue={data.max_value}
+              formatValue={formatValue}
+              formatTooltip={(row, col, value) =>
+                `${row} ${col}:00 - ${formatValue(value)}`
+              }
+            />
+          ) : null}
+        </CardContent>
+      </Card>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-        <MetricCard title={`Total ${METRIC_LABELS[metric]}`} value={formatValue(total)} />
-        <MetricCard title="Peak Day" value={DAYS[peakDay] || 'N/A'} subtitle={formatValue(peakVal)} />
-        <MetricCard title="Peak Hour" value={`${peakHour}:00`} subtitle={formatValue(peakVal)} />
-        <MetricCard title="Max Cell" value={formatValue(data.max_value)} />
-      </div>
+      <MetricCardGrid skeleton={isLoading} count={4}>
+        {data && (
+          <>
+            <MetricCard title={`Total ${METRIC_LABELS[metric]}`} value={formatValue(total)} />
+            <MetricCard title="Peak Day" value={DAYS[peakDay] || 'N/A'} subtitle={formatValue(peakVal)} />
+            <MetricCard title="Peak Hour" value={`${peakHour}:00`} subtitle={formatValue(peakVal)} />
+            <MetricCard title="Max Cell" value={formatValue(data.max_value)} />
+          </>
+        )}
+      </MetricCardGrid>
     </PageLayout>
   )
 }

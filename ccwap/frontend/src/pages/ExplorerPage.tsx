@@ -1,21 +1,37 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   PieChart, Pie, Cell, RadarChart, Radar, PolarGrid,
   PolarAngleAxis, PolarRadiusAxis, Treemap,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
-import { PageLayout } from '@/components/PageLayout'
-import { MetricCard } from '@/components/ui/MetricCard'
-import { ChartCard } from '@/components/ui/ChartCard'
-import { LoadingState } from '@/components/ui/LoadingState'
-import { ErrorState } from '@/components/ui/ErrorState'
-import { EmptyState } from '@/components/ui/EmptyState'
+import { PageLayout } from '@/components/layout/PageLayout'
+import { MetricCard } from '@/components/composite/MetricCard'
+import { MetricCardGrid } from '@/components/composite/MetricCardGrid'
+import { ChartContainer } from '@/components/composite/ChartContainer'
+import { DataTable } from '@/components/composite/DataTable'
+import { EmptyState } from '@/components/composite/EmptyState'
+import { ErrorState } from '@/components/composite/ErrorState'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+  SelectGroup,
+  SelectLabel,
+} from '@/components/ui/select'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDateRange } from '@/hooks/useDateRange'
 import { useExplorer, useExplorerFilters } from '@/api/explorer'
 import type { ExplorerParams, FilterOption } from '@/api/explorer'
 import { TOOLTIP_STYLE, CHART_COLORS, fillZeros } from '@/lib/chartConfig'
 import { formatNumber, formatCurrency, formatDuration, cn } from '@/lib/utils'
+import { type ColumnDef } from '@tanstack/react-table'
 import { ChevronDown, X } from 'lucide-react'
 
 // Metric definitions
@@ -69,7 +85,7 @@ function formatValue(value: number, metric: string): string {
   return formatNumber(value)
 }
 
-// Multi-select dropdown component
+// Multi-select dropdown component using Popover
 function MultiSelect({
   label,
   options,
@@ -82,15 +98,6 @@ function MultiSelect({
   onChange: (v: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
 
   const toggle = useCallback((val: string) => {
     onChange(
@@ -101,49 +108,55 @@ function MultiSelect({
   }, [selected, onChange])
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={cn(
-          "flex items-center gap-1.5 w-full px-3 py-1.5 text-sm rounded-md border border-border bg-background",
-          "hover:bg-accent/50 text-left",
-          selected.length > 0 && "ring-1 ring-primary/30",
-        )}
-      >
-        <span className="flex-1 truncate">
-          {selected.length > 0 ? `${label} (${selected.length})` : label}
-        </span>
-        {selected.length > 0 && (
-          <X
-            className="h-3 w-3 text-muted-foreground hover:text-foreground shrink-0"
-            onClick={e => { e.stopPropagation(); onChange([]) }}
-          />
-        )}
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-      </button>
-      {open && (
-        <div className="absolute z-50 mt-1 w-64 max-h-60 overflow-y-auto rounded-md border border-border bg-card shadow-lg">
-          {options.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">No options</p>
-          ) : options.map(opt => (
-            <label
-              key={opt.value}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-accent/50 cursor-pointer text-sm"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(opt.value)}
-                onChange={() => toggle(opt.value)}
-                className="rounded border-border"
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn(
+            "w-full justify-between text-sm font-normal h-9",
+            selected.length > 0 && "ring-1 ring-primary/30",
+          )}
+        >
+          <span className="truncate">
+            {selected.length > 0 ? `${label} (${selected.length})` : label}
+          </span>
+          <div className="flex items-center gap-1 shrink-0 ml-1">
+            {selected.length > 0 && (
+              <X
+                className="h-3 w-3 text-muted-foreground hover:text-foreground"
+                onClick={e => { e.stopPropagation(); onChange([]) }}
               />
-              <span className="flex-1 truncate">{opt.label}</span>
-              <span className="text-xs text-muted-foreground">{opt.count}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
+            )}
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-0" align="start">
+        <ScrollArea className="max-h-60">
+          <div className="p-1">
+            {options.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground">No options</p>
+            ) : options.map(opt => (
+              <label
+                key={opt.value}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-accent/50 cursor-pointer text-sm rounded-sm"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(opt.value)}
+                  onChange={() => toggle(opt.value)}
+                  className="rounded border-border"
+                />
+                <span className="flex-1 truncate">{opt.label}</span>
+                <span className="text-xs text-muted-foreground">{opt.count}</span>
+              </label>
+            ))}
+          </div>
+        </ScrollArea>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -250,58 +263,103 @@ export default function ExplorerPage() {
     return { timeData: [], catData: top20, pieData: top10, treemapData: treemap, radarData: [], splitKeys: [] as string[], tableRows: rows }
   }, [data, isTimeSeries, hasSplit])
 
+  // Dynamic columns for the raw data table
+  const rawTableColumns: ColumnDef<any, unknown>[] = useMemo(() => {
+    const cols: ColumnDef<any, unknown>[] = [
+      {
+        accessorKey: 'group',
+        header: effectiveGroupBy ?? 'Group',
+        cell: ({ row }) => <span>{row.original.group}</span>,
+      },
+    ]
+    if (hasSplit) {
+      cols.push({
+        accessorKey: 'split',
+        header: effectiveSplitBy ?? 'Split',
+        cell: ({ row }) => <span>{row.original.split}</span>,
+      })
+    }
+    cols.push({
+      accessorKey: 'value',
+      header: () => <span className="text-right block">{metricLabel}</span>,
+      cell: ({ row }) => (
+        <span className="font-mono text-right block">{formatValue(row.original.value, metric!)}</span>
+      ),
+    })
+    return cols
+  }, [effectiveGroupBy, effectiveSplitBy, hasSplit, metricLabel, metric])
+
   return (
-    <PageLayout title="Analytics Explorer" subtitle="Query any metric by any dimension">
+    <PageLayout title="Data Explorer" subtitle="Query any metric by any dimension">
       {/* Controls row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         <div>
           <label className="block text-xs text-muted-foreground mb-1">Metric</label>
-          <select
-            value={metric ?? ''}
-            onChange={e => { setMetric(e.target.value || null); setGroupBy(null); setSplitBy(null) }}
-            className="w-full px-3 py-1.5 text-sm rounded-md border border-border bg-background"
+          <Select
+            value={metric ?? '__none__'}
+            onValueChange={(val) => { setMetric(val === '__none__' ? null : val); setGroupBy(null); setSplitBy(null) }}
           >
-            <option value="">Select metric...</option>
-            {['Turns', 'Tools', 'Sessions'].map(group => (
-              <optgroup key={group} label={group}>
-                {METRICS.filter(m => m.group === group).map(m => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="Select metric..." />
+            </SelectTrigger>
+            <SelectContent>
+              {['Turns', 'Tools', 'Sessions'].map(group => (
+                <SelectGroup key={group}>
+                  <SelectLabel>{group}</SelectLabel>
+                  {METRICS.filter(m => m.group === group).map(m => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div>
           <label className="block text-xs text-muted-foreground mb-1">Group By</label>
-          <select
-            value={effectiveGroupBy ?? ''}
-            onChange={e => setGroupBy(e.target.value || null)}
-            className="w-full px-3 py-1.5 text-sm rounded-md border border-border bg-background"
+          <Select
+            value={effectiveGroupBy ?? '__none__'}
+            onValueChange={(val) => setGroupBy(val === '__none__' ? null : val)}
             disabled={!metric}
           >
-            <option value="">Select dimension...</option>
-            {ALL_DIMENSIONS.map(d => (
-              <option key={d.value} value={d.value} disabled={!allowedDims.has(d.value)}>
-                {d.label}{!allowedDims.has(d.value) ? ' (N/A)' : ''}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="Select dimension..." />
+            </SelectTrigger>
+            <SelectContent>
+              {ALL_DIMENSIONS.map(d => (
+                <SelectItem
+                  key={d.value}
+                  value={d.value}
+                  disabled={!allowedDims.has(d.value)}
+                >
+                  {d.label}{!allowedDims.has(d.value) ? ' (N/A)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div>
           <label className="block text-xs text-muted-foreground mb-1">Split By (optional)</label>
-          <select
-            value={effectiveSplitBy ?? ''}
-            onChange={e => setSplitBy(e.target.value || null)}
-            className="w-full px-3 py-1.5 text-sm rounded-md border border-border bg-background"
+          <Select
+            value={effectiveSplitBy ?? '__none__'}
+            onValueChange={(val) => setSplitBy(val === '__none__' ? null : val)}
             disabled={!metric || !effectiveGroupBy}
           >
-            <option value="">None</option>
-            {ALL_DIMENSIONS.filter(d => d.value !== effectiveGroupBy).map(d => (
-              <option key={d.value} value={d.value} disabled={!allowedDims.has(d.value)}>
-                {d.label}{!allowedDims.has(d.value) ? ' (N/A)' : ''}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="None" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">None</SelectItem>
+              {ALL_DIMENSIONS.filter(d => d.value !== effectiveGroupBy).map(d => (
+                <SelectItem
+                  key={d.value}
+                  value={d.value}
+                  disabled={!allowedDims.has(d.value)}
+                >
+                  {d.label}{!allowedDims.has(d.value) ? ' (N/A)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -339,7 +397,10 @@ export default function ExplorerPage() {
       {!metric || !effectiveGroupBy ? (
         <EmptyState message="Select a metric and dimension to explore" />
       ) : isLoading ? (
-        <LoadingState message="Querying data..." />
+        <div className="space-y-4">
+          <MetricCardGrid skeleton count={4} />
+          <Skeleton className="h-80 w-full" />
+        </div>
       ) : error ? (
         <ErrorState message={error.message} />
       ) : !data || data.rows.length === 0 ? (
@@ -347,7 +408,7 @@ export default function ExplorerPage() {
       ) : (
         <>
           {/* Summary cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <MetricCardGrid className="mb-6">
             <MetricCard title="Total" value={formatValue(data.metadata.total, metric)} />
             <MetricCard title="Data Points" value={formatNumber(data.metadata.row_count)} />
             <MetricCard title="Groups" value={formatNumber(data.metadata.groups.length)} />
@@ -358,222 +419,183 @@ export default function ExplorerPage() {
                 : formatValue(data.metadata.total / Math.max(data.metadata.groups.length, 1), metric)
               }
             />
-          </div>
+          </MetricCardGrid>
 
-          {/* Charts — time series, no split */}
+          {/* Charts -- time series, no split */}
           {isTimeSeries && !hasSplit && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-              <ChartCard title={`${metricLabel} Over Time`} subtitle="Line chart">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={timeData}>
-                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Line type="monotone" dataKey="value" stroke={CHART_COLORS[0]} strokeWidth={2} dot={{ r: 3 }} name={metricLabel} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
-              <ChartCard title={`${metricLabel} Over Time`} subtitle="Area chart">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={timeData}>
-                      <defs>
-                        <linearGradient id="explorerGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={CHART_COLORS[0]} stopOpacity={0.3} />
-                          <stop offset="95%" stopColor={CHART_COLORS[0]} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Area type="monotone" dataKey="value" stroke={CHART_COLORS[0]} fill="url(#explorerGrad)" name={metricLabel} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
+              <ChartContainer title={`${metricLabel} Over Time`} height={320}>
+                <LineChart data={timeData}>
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Line type="monotone" dataKey="value" stroke={CHART_COLORS[0]} strokeWidth={2} dot={{ r: 3 }} name={metricLabel} />
+                </LineChart>
+              </ChartContainer>
+              <ChartContainer title={`${metricLabel} Over Time`} height={320}>
+                <AreaChart data={timeData}>
+                  <defs>
+                    <linearGradient id="explorerGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={CHART_COLORS[0]} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={CHART_COLORS[0]} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Area type="monotone" dataKey="value" stroke={CHART_COLORS[0]} fill="url(#explorerGrad)" name={metricLabel} />
+                </AreaChart>
+              </ChartContainer>
             </div>
           )}
 
-          {/* Charts — time series, with split */}
+          {/* Charts -- time series, with split */}
           {isTimeSeries && hasSplit && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-              <ChartCard title={`${metricLabel} by ${effectiveSplitBy}`} subtitle="Multi-line chart">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={timeData}>
-                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Legend />
-                      {splitKeys.map((k, i) => (
-                        <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} name={k} />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
-              <ChartCard title={`${metricLabel} Stacked`} subtitle="Stacked area chart">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={timeData}>
-                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Legend />
-                      {splitKeys.map((k, i) => (
-                        <Area key={k} type="monotone" dataKey={k} stackId="1" stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.4} name={k} />
-                      ))}
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
+              <ChartContainer title={`${metricLabel} by ${effectiveSplitBy}`} height={320}>
+                <LineChart data={timeData}>
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend />
+                  {splitKeys.map((k, i) => (
+                    <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} name={k} />
+                  ))}
+                </LineChart>
+              </ChartContainer>
+              <ChartContainer title={`${metricLabel} Stacked`} height={320}>
+                <AreaChart data={timeData}>
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend />
+                  {splitKeys.map((k, i) => (
+                    <Area key={k} type="monotone" dataKey={k} stackId="1" stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.4} name={k} />
+                  ))}
+                </AreaChart>
+              </ChartContainer>
             </div>
           )}
 
-          {/* Charts — categorical, no split */}
+          {/* Charts -- categorical, no split */}
           {!isTimeSeries && !hasSplit && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-              <ChartCard title={`${metricLabel} by ${effectiveGroupBy}`} subtitle="Bar chart (top 20)">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={catData} layout="vertical">
-                      <XAxis type="number" tick={{ fontSize: 10 }} />
-                      <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Bar dataKey="value" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} name={metricLabel} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
-              <ChartCard title={`${metricLabel} Distribution`} subtitle="Donut chart (top 10)">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={pieData}
+              <ChartContainer title={`${metricLabel} by ${effectiveGroupBy}`} height={320}>
+                <BarChart data={catData} layout="vertical">
+                  <XAxis type="number" tick={{ fontSize: 10 }} />
+                  <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Bar dataKey="value" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} name={metricLabel} />
+                </BarChart>
+              </ChartContainer>
+              <ChartContainer title={`${metricLabel} Distribution`} height={320}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    paddingAngle={2}
+                    label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    labelLine={{ strokeWidth: 1 }}
+                  >
+                    {pieData.map((_: any, i: number) => (
+                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                </PieChart>
+              </ChartContainer>
+              <Card>
+                <CardHeader className="pb-3 pt-4 px-4">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">{metricLabel} Treemap</CardTitle>
+                  <span className="text-xs text-muted-foreground">Top 30 by size</span>
+                </CardHeader>
+                <CardContent className="px-4 pb-4">
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <Treemap
+                        data={treemapData}
                         dataKey="value"
                         nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={100}
-                        paddingAngle={2}
-                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`}
-                        labelLine={{ strokeWidth: 1 }}
-                      >
-                        {pieData.map((_: any, i: number) => (
-                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
-              <ChartCard title={`${metricLabel} Treemap`} subtitle="Top 30 by size">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <Treemap
-                      data={treemapData}
-                      dataKey="value"
-                      nameKey="name"
-                      stroke="var(--color-border)"
-                      content={({ x, y, width, height, name, fill }: any) => (
-                        <g>
-                          <rect x={x} y={y} width={width} height={height} fill={fill} rx={2} />
-                          {width >= 30 && height >= 20 && (
-                            <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="middle" fill="white" fontSize={10}>
-                              {String(name ?? '').slice(0, Math.floor(width / 7))}
-                            </text>
-                          )}
-                        </g>
-                      )}
-                    />
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
+                        stroke="var(--color-border)"
+                        content={({ x, y, width, height, name, fill }: any) => (
+                          <g>
+                            <rect x={x} y={y} width={width} height={height} fill={fill} rx={2} />
+                            {width >= 30 && height >= 20 && (
+                              <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="middle" fill="white" fontSize={10}>
+                                {String(name ?? '').slice(0, Math.floor(width / 7))}
+                              </text>
+                            )}
+                          </g>
+                        )}
+                      />
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           )}
 
-          {/* Charts — categorical, with split */}
+          {/* Charts -- categorical, with split */}
           {!isTimeSeries && hasSplit && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-              <ChartCard title={`${metricLabel} Grouped`} subtitle="Grouped bar chart">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={catData}>
-                      <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={60} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Legend />
-                      {splitKeys.map((k, i) => (
-                        <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[4, 4, 0, 0]} name={k} />
-                      ))}
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
-              <ChartCard title={`${metricLabel} Stacked`} subtitle="Stacked bar chart">
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={catData}>
-                      <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={60} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Legend />
-                      {splitKeys.map((k, i) => (
-                        <Bar key={k} dataKey={k} stackId="stack" fill={CHART_COLORS[i % CHART_COLORS.length]} name={k} />
-                      ))}
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
+              <ChartContainer title={`${metricLabel} Grouped`} height={320}>
+                <BarChart data={catData}>
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={60} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend />
+                  {splitKeys.map((k, i) => (
+                    <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[4, 4, 0, 0]} name={k} />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+              <ChartContainer title={`${metricLabel} Stacked`} height={320}>
+                <BarChart data={catData}>
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={60} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend />
+                  {splitKeys.map((k, i) => (
+                    <Bar key={k} dataKey={k} stackId="stack" fill={CHART_COLORS[i % CHART_COLORS.length]} name={k} />
+                  ))}
+                </BarChart>
+              </ChartContainer>
               {radarData.length > 0 && radarData.length <= 8 && (
-                <ChartCard title={`${metricLabel} Radar`} subtitle="Radar chart">
-                  <div className="h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <RadarChart data={radarData}>
-                        <PolarGrid />
-                        <PolarAngleAxis dataKey="name" tick={{ fontSize: 10 }} />
-                        <PolarRadiusAxis tick={{ fontSize: 9 }} />
-                        {splitKeys.map((k, i) => (
-                          <Radar key={k} dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.2} name={k} />
-                        ))}
-                        <Legend />
-                        <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      </RadarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </ChartCard>
+                <ChartContainer title={`${metricLabel} Radar`} height={320}>
+                  <RadarChart data={radarData}>
+                    <PolarGrid />
+                    <PolarAngleAxis dataKey="name" tick={{ fontSize: 10 }} />
+                    <PolarRadiusAxis tick={{ fontSize: 9 }} />
+                    {splitKeys.map((k, i) => (
+                      <Radar key={k} dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.2} name={k} />
+                    ))}
+                    <Legend />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  </RadarChart>
+                </ChartContainer>
               )}
             </div>
           )}
 
           {/* Data table */}
-          <ChartCard title="Raw Data" subtitle={`${tableRows.length} rows (max 100 shown)`}>
-            <div className="max-h-96 overflow-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left">
-                    <th className="py-2 px-3 font-medium text-muted-foreground">{effectiveGroupBy}</th>
-                    {hasSplit && <th className="py-2 px-3 font-medium text-muted-foreground">{effectiveSplitBy}</th>}
-                    <th className="py-2 px-3 font-medium text-muted-foreground text-right">{metricLabel}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableRows.slice(0, 100).map((r, i) => (
-                    <tr key={i} className="border-b border-border/50 hover:bg-accent/30">
-                      <td className="py-1.5 px-3">{r.group}</td>
-                      {hasSplit && <td className="py-1.5 px-3">{r.split}</td>}
-                      <td className="py-1.5 px-3 text-right font-mono">{formatValue(r.value, metric!)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </ChartCard>
+          <Card>
+            <CardHeader className="pb-3 pt-4 px-4">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Raw Data</CardTitle>
+              <span className="text-xs text-muted-foreground">{tableRows.length} rows (max 100 shown)</span>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              <DataTable
+                columns={rawTableColumns}
+                data={tableRows.slice(0, 100)}
+                emptyMessage="No data"
+              />
+            </CardContent>
+          </Card>
         </>
       )}
     </PageLayout>

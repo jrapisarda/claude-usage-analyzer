@@ -285,6 +285,61 @@ class TestLOCCounting(unittest.TestCase):
         self.assertEqual(deleted, 0)
 
 
+    def test_count_loc_shell_glob_not_treated_as_comment(self):
+        """Verify /* in shell glob paths is not treated as C-style comment."""
+        content = "#!/bin/bash\n# comment\nfor f in /tmp/*; do\n  echo $f\ndone\n"
+        loc = count_loc(content, 'deploy.sh')
+        self.assertEqual(loc, 3)  # for, echo, done
+
+    def test_count_loc_shell_hash_comments(self):
+        """Verify # comments are skipped in shell scripts."""
+        content = "#!/bin/bash\n# setup\necho hello\n# cleanup\nexit 0\n"
+        loc = count_loc(content, 'run.sh')
+        self.assertEqual(loc, 2)  # echo, exit
+
+    def test_count_loc_powershell_single_line_comment(self):
+        """Verify # comments are skipped in PowerShell."""
+        content = "# Comment\nWrite-Host 'hello'\n"
+        loc = count_loc(content, 'script.ps1')
+        self.assertEqual(loc, 1)
+
+    def test_count_loc_powershell_multiline_comment(self):
+        """Verify <# #> multiline comments are skipped in PowerShell."""
+        content = "<#\n.SYNOPSIS\n  Does stuff\n#>\nWrite-Host 'hello'\n$x = 1\n"
+        loc = count_loc(content, 'script.ps1')
+        self.assertEqual(loc, 2)  # Write-Host, $x
+
+    def test_count_loc_powershell_inline_multiline(self):
+        """Verify single-line <# #> comment on one line."""
+        content = "$x = 1 <# inline comment #>\n$y = 2\n"
+        loc = count_loc(content, 'script.ps1')
+        self.assertEqual(loc, 2)
+
+    def test_count_loc_batch_comments(self):
+        """Verify REM and :: comments are skipped in batch files."""
+        content = "REM This is a comment\n:: Another comment\necho hello\n"
+        loc = count_loc(content, 'build.bat')
+        self.assertEqual(loc, 1)  # echo
+
+    def test_count_loc_html_comment(self):
+        """Verify <!-- --> comments are skipped in HTML."""
+        content = "<!-- comment -->\n<div>hello</div>\n"
+        loc = count_loc(content, 'page.html')
+        self.assertEqual(loc, 1)  # <div>
+
+    def test_count_loc_html_multiline_comment(self):
+        """Verify multiline <!-- --> blocks are skipped."""
+        content = "<!--\n  multiline\n  comment\n-->\n<p>hi</p>\n"
+        loc = count_loc(content, 'page.html')
+        self.assertEqual(loc, 1)  # <p>
+
+    def test_count_loc_unknown_language_uses_defaults(self):
+        """Verify unknown file types use default comment styles."""
+        content = "# hash comment\n// slash comment\nactual code\n"
+        loc = count_loc(content, 'file.xyz')
+        self.assertEqual(loc, 1)  # actual code
+
+
 class TestLanguageDetection(unittest.TestCase):
     """Test language detection from file extensions."""
 
@@ -302,6 +357,23 @@ class TestLanguageDetection(unittest.TestCase):
         """Verify TypeScript files are detected."""
         self.assertEqual(detect_language('test.ts'), 'TypeScript')
         self.assertEqual(detect_language('test.tsx'), 'TypeScript')
+
+    def test_detect_shell(self):
+        """Verify Shell files are detected."""
+        self.assertEqual(detect_language('deploy.sh'), 'Shell')
+        self.assertEqual(detect_language('setup.bash'), 'Shell')
+        self.assertEqual(detect_language('config.zsh'), 'Shell')
+
+    def test_detect_powershell(self):
+        """Verify PowerShell files are detected."""
+        self.assertEqual(detect_language('script.ps1'), 'PowerShell')
+        self.assertEqual(detect_language('module.psm1'), 'PowerShell')
+        self.assertEqual(detect_language('data.psd1'), 'PowerShell')
+
+    def test_detect_batch(self):
+        """Verify Batch files are detected."""
+        self.assertEqual(detect_language('build.bat'), 'Batch')
+        self.assertEqual(detect_language('run.cmd'), 'Batch')
 
     def test_detect_unknown(self):
         """Verify unknown extensions return None."""

@@ -1,36 +1,17 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, Fragment } from 'react'
 import { Link } from 'react-router'
-import { ChevronDown, ChevronUp, Search, ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-react'
-import { PageLayout } from '@/components/PageLayout'
+import type { ColumnDef } from '@tanstack/react-table'
+import { Search } from 'lucide-react'
+import { PageLayout } from '@/components/layout/PageLayout'
+import { DataTable } from '@/components/composite/DataTable'
+import { ErrorState } from '@/components/composite/ErrorState'
+import { EmptyState } from '@/components/composite/EmptyState'
+import { ExportDropdown } from '@/components/composite/ExportDropdown'
+import { Input } from '@/components/ui/input'
 import { useDateRange } from '@/hooks/useDateRange'
 import { useProjects } from '@/api/projects'
 import type { ProjectData } from '@/api/projects'
-import { LoadingState } from '@/components/ui/LoadingState'
-import { ErrorState } from '@/components/ui/ErrorState'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { formatCurrency, formatNumber, formatPercent, formatDuration, cn } from '@/lib/utils'
-import { ExportDropdown } from '@/components/ExportDropdown'
-
-type SortField = 'cost' | 'sessions' | 'loc_written' | 'error_rate' | 'messages' | 'tool_calls' | 'cost_per_kloc' | 'tokens_per_loc' | 'cache_hit_rate'
-type SortOrder = 'asc' | 'desc'
-
-interface Column {
-  key: SortField
-  label: string
-  format: (v: number) => string
-  align?: 'left' | 'right'
-}
-
-const defaultColumns: Column[] = [
-  { key: 'sessions', label: 'Sessions', format: formatNumber, align: 'right' },
-  { key: 'cost', label: 'Cost', format: formatCurrency, align: 'right' },
-  { key: 'loc_written', label: 'LOC', format: formatNumber, align: 'right' },
-  { key: 'messages', label: 'Messages', format: formatNumber, align: 'right' },
-  { key: 'tool_calls', label: 'Tool Calls', format: formatNumber, align: 'right' },
-  { key: 'error_rate', label: 'Error Rate', format: formatPercent, align: 'right' },
-  { key: 'cost_per_kloc', label: '$/kLOC', format: formatCurrency, align: 'right' },
-  { key: 'cache_hit_rate', label: 'Cache Hit', format: formatPercent, align: 'right' },
-]
+import { formatCurrency, formatNumber, formatPercent, formatDuration } from '@/lib/utils'
 
 function ExpandedRow({ project }: { project: ProjectData }) {
   const fields = [
@@ -61,54 +42,111 @@ function ExpandedRow({ project }: { project: ProjectData }) {
   ] as const
 
   return (
-    <tr>
-      <td colSpan={defaultColumns.length + 1} className="p-0">
-        <div className="bg-accent/30 p-4 border-t border-border">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-x-6 gap-y-2">
-            {fields.map(([label, value]) => (
-              <div key={label} className="flex justify-between text-sm">
-                <span className="text-muted-foreground">{label}</span>
-                <span className="font-mono">{value}</span>
-              </div>
-            ))}
+    <div className="bg-accent/30 p-4 border-t border-border">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-x-6 gap-y-2">
+        {fields.map(([label, value]) => (
+          <div key={label} className="flex justify-between text-sm">
+            <span className="text-muted-foreground">{label}</span>
+            <span className="font-mono">{value}</span>
           </div>
-          <div className="mt-3">
-            <Link
-              to={`/sessions?project=${encodeURIComponent(project.project_path)}`}
-              className="text-sm text-primary hover:underline"
-            >
-              View Sessions &rarr;
-            </Link>
-          </div>
-        </div>
-      </td>
-    </tr>
+        ))}
+      </div>
+      <div className="mt-3">
+        <Link
+          to={`/sessions?project=${encodeURIComponent(project.project_path)}`}
+          className="text-sm text-primary hover:underline"
+        >
+          View Sessions &rarr;
+        </Link>
+      </div>
+    </div>
   )
 }
+
+type SortField = 'cost' | 'sessions' | 'loc_written' | 'error_rate' | 'messages' | 'tool_calls' | 'cost_per_kloc' | 'tokens_per_loc' | 'cache_hit_rate'
+
+const projectColumns: ColumnDef<ProjectData, unknown>[] = [
+  {
+    id: 'project_display',
+    accessorKey: 'project_display',
+    header: 'Project',
+    enableSorting: false,
+    cell: ({ row }) => {
+      const p = row.original
+      return (
+        <Link
+          to={`/projects/${btoa(unescape(encodeURIComponent(p.project_path)))}`}
+          onClick={e => e.stopPropagation()}
+          className="text-primary hover:underline font-medium truncate block max-w-xs"
+        >
+          {p.project_display}
+        </Link>
+      )
+    },
+  },
+  {
+    accessorKey: 'sessions',
+    header: () => <div className="text-right">Sessions</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatNumber(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'cost',
+    header: () => <div className="text-right">Cost</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatCurrency(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'loc_written',
+    header: () => <div className="text-right">LOC</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatNumber(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'messages',
+    header: () => <div className="text-right">Messages</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatNumber(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'tool_calls',
+    header: () => <div className="text-right">Tool Calls</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatNumber(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'error_rate',
+    header: () => <div className="text-right">Error Rate</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatPercent(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'cost_per_kloc',
+    header: () => <div className="text-right">$/kLOC</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatCurrency(getValue<number>())}</div>,
+  },
+  {
+    accessorKey: 'cache_hit_rate',
+    header: () => <div className="text-right">Cache Hit</div>,
+    cell: ({ getValue }) => <div className="text-right font-mono">{formatPercent(getValue<number>())}</div>,
+  },
+]
 
 export default function ProjectsPage() {
   const { dateRange } = useDateRange()
   const [sort, setSort] = useState<SortField>('cost')
-  const [order, setOrder] = useState<SortOrder>('desc')
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
 
   const { data, isLoading, error } = useProjects(dateRange, sort, order, page, search || undefined)
 
-  const handleSort = useCallback((field: SortField) => {
-    if (sort === field) {
-      setOrder(prev => prev === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSort(field)
-      setOrder('desc')
-    }
+  const handleSort = useCallback((columnId: string, direction: 'asc' | 'desc') => {
+    setSort(columnId as SortField)
+    setOrder(direction)
     setPage(1)
-  }, [sort])
-
-  const toggleExpand = useCallback((path: string) => {
-    setExpandedRow(prev => prev === path ? null : path)
   }, [])
+
+  const handlePageChange = useCallback((pageIndex: number) => {
+    setPage(pageIndex + 1) // DataTable uses 0-indexed, API uses 1-indexed
+  }, [])
+
+  if (error) return <ErrorState message={error.message} />
 
   return (
     <PageLayout
@@ -134,75 +172,92 @@ export default function ProjectsPage() {
       {/* Search */}
       <div className="mb-4 relative max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <input
-          type="text"
+        <Input
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(1) }}
           placeholder="Search projects..."
-          className="w-full pl-9 pr-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          className="pl-9"
         />
       </div>
 
-      {isLoading ? <LoadingState message="Loading projects..." /> :
-       error ? <ErrorState message={error.message} /> :
-       !data || data.projects.length === 0 ? <EmptyState message="No projects found" /> : (
+      {!data || data.projects.length === 0 ? (
+        isLoading ? null : <EmptyState message="No projects found" />
+      ) : (
         <>
-          <div className="rounded-lg border border-border overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/50 border-b border-border">
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Project</th>
-                    {defaultColumns.map(col => (
+          {/* We use the DataTable for column headers and server-side sort,
+              but render custom rows with expansion support */}
+          <div className="rounded-md border border-border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  {projectColumns.map((col) => {
+                    const colId = ('accessorKey' in col ? col.accessorKey : col.id) as string
+                    const isSorted = sort === colId
+                    const canSort = col.enableSorting !== false && colId !== 'project_display'
+                    return (
                       <th
-                        key={col.key}
-                        onClick={() => handleSort(col.key)}
-                        className="px-4 py-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors text-right whitespace-nowrap"
+                        key={colId}
+                        onClick={() => {
+                          if (!canSort) return
+                          if (isSorted) {
+                            handleSort(colId, order === 'asc' ? 'desc' : 'asc')
+                          } else {
+                            handleSort(colId, 'desc')
+                          }
+                        }}
+                        className={`px-4 py-3 font-medium text-muted-foreground text-sm whitespace-nowrap ${
+                          colId === 'project_display' ? 'text-left' : 'text-right'
+                        } ${canSort ? 'cursor-pointer hover:text-foreground transition-colors' : ''}`}
                       >
                         <span className="inline-flex items-center gap-1">
-                          {col.label}
-                          {sort === col.key ? (
-                            order === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-                          ) : (
-                            <ChevronsUpDown className="h-3 w-3 opacity-30" />
+                          {typeof col.header === 'function' ? (col.header as any)({}) : col.header}
+                          {canSort && isSorted && (
+                            <span className="text-xs">{order === 'asc' ? '\u25B2' : '\u25BC'}</span>
                           )}
                         </span>
                       </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.projects.map(p => (
-                    <>
-                      <tr
-                        key={p.project_path}
-                        onClick={() => toggleExpand(p.project_path)}
-                        className={cn(
-                          "border-b border-border cursor-pointer transition-colors",
-                          expandedRow === p.project_path ? "bg-accent/20" : "hover:bg-accent/10"
-                        )}
-                      >
-                        <td className="px-4 py-3 font-medium truncate max-w-xs">
-                          <Link
-                            to={`/projects/${btoa(unescape(encodeURIComponent(p.project_path)))}`}
-                            onClick={e => e.stopPropagation()}
-                            className="text-primary hover:underline"
-                          >
-                            {p.project_display}
-                          </Link>
+                    )
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {data.projects.map(p => (
+                  <Fragment key={p.project_path}>
+                    <tr
+                      onClick={() => setExpandedRow(prev => prev === p.project_path ? null : p.project_path)}
+                      className={`border-b border-border cursor-pointer transition-colors ${
+                        expandedRow === p.project_path ? 'bg-accent/20' : 'hover:bg-accent/10'
+                      }`}
+                    >
+                      <td className="px-4 py-3 font-medium truncate max-w-xs">
+                        <Link
+                          to={`/projects/${btoa(unescape(encodeURIComponent(p.project_path)))}`}
+                          onClick={e => e.stopPropagation()}
+                          className="text-primary hover:underline"
+                        >
+                          {p.project_display}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatNumber(p.sessions)}</td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatCurrency(p.cost)}</td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatNumber(p.loc_written)}</td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatNumber(p.messages)}</td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatNumber(p.tool_calls)}</td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatPercent(p.error_rate)}</td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatCurrency(p.cost_per_kloc)}</td>
+                      <td className="px-4 py-3 font-mono text-right whitespace-nowrap">{formatPercent(p.cache_hit_rate)}</td>
+                    </tr>
+                    {expandedRow === p.project_path && (
+                      <tr key={`${p.project_path}-expanded`}>
+                        <td colSpan={projectColumns.length} className="p-0">
+                          <ExpandedRow project={p} />
                         </td>
-                        {defaultColumns.map(col => (
-                          <td key={col.key} className="px-4 py-3 font-mono text-right whitespace-nowrap">
-                            {col.format(p[col.key])}
-                          </td>
-                        ))}
                       </tr>
-                      {expandedRow === p.project_path && <ExpandedRow key={`${p.project_path}-expanded`} project={p} />}
-                    </>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
           </div>
 
           {/* Pagination */}
@@ -217,14 +272,14 @@ export default function ProjectsPage() {
                   disabled={page <= 1}
                   className="p-2 rounded border border-border hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  <ChevronLeft className="h-4 w-4" />
+                  &lt;
                 </button>
                 <button
                   onClick={() => setPage(p => Math.min(data.pagination.total_pages, p + 1))}
                   disabled={page >= data.pagination.total_pages}
                   className="p-2 rounded border border-border hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  &gt;
                 </button>
               </div>
             </div>
