@@ -1,0 +1,5 @@
+{"uuid":"good-001","timestamp":"2026-01-15T10:00:00.000Z","type":"user","message":{"content":"Good entry 1"}}
+this is not valid json
+{"uuid":"good-002","timestamp":"2026-01-15T10:00:01.000Z","type":"user","message":{"content":"Good entry 2"}}
+{"incomplete":
+{"uuid":"good-003","timestamp":"2026-01-15T10:00:02.000Z","type":"user","message":{"content":"Good entry 3"}}

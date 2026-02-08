@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Node
+node_modules/
+ccwap/frontend/dist/
+ccwap/frontend/dist-ssr/
+
+# Logs
+*.log
+npm-debug.log*
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Test / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Claude local settings
+.claude/settings.local.json
+
+# Scratchpad
+test_reports.py
+snowflake_sync.cpython-*.pyc
+
+# Windows reserved names
+nul

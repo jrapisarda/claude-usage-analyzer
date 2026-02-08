@@ -1,0 +1,1 @@
+import{r as s}from"./react-vendor-CGr-4ZyM.js";function S(r,e){const[c,n]=s.useState(()=>{try{const t=localStorage.getItem(r);return t?JSON.parse(t):e}catch{return e}}),a=s.useCallback(t=>{n(i=>{const o=t instanceof Function?t(i):t;try{localStorage.setItem(r,JSON.stringify(o))}catch{}return o})},[r]);return[c,a]}export{S as u};

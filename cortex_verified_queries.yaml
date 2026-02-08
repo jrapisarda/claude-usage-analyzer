@@ -1,0 +1,595 @@
+name: ccwap_verified_queries
+description: >
+  Verified query patterns for CCWAP (Claude Code Workload Analytics Platform).
+  Tracks Claude Code CLI usage: sessions, turns (LLM calls), tool calls, costs,
+  tokens, and productivity metrics across projects.
+
+# Schema notes for Cortex Analyst:
+#   - Timestamps are VARCHAR in ISO-8601 format; cast with TRY_TO_TIMESTAMP()
+#   - is_agent is INTEGER (0=interactive, 1=agent/subagent)
+#   - cost is FLOAT in USD on the turns table (per-turn)
+#   - daily_summaries is pre-aggregated; prefer it for date-range trends
+#   - sessions.first_timestamp is session start (NOT start_time)
+#   - turns.id is the PK (NOT turn_id); tool_calls.turn_id references turns.id
+#   - Avoid JOINing turns + tool_calls directly (N*M cross-product inflates aggregates)
+
+verified_queries:
+
+  # ---------------------------------------------------------------------------
+  # DAILY / TREND QUERIES (use daily_summaries for efficiency)
+  # ---------------------------------------------------------------------------
+
+  - question: "What is my total cost this week?"
+    sql: |
+      SELECT SUM(cost) AS total_cost
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATE_TRUNC('week', CURRENT_DATE())
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show me daily cost for the last 30 days"
+    sql: |
+      SELECT date, cost
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATEADD('day', -30, CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my daily cost trend this month?"
+    sql: |
+      SELECT date, cost,
+             SUM(cost) OVER (ORDER BY date) AS cumulative_cost
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATE_TRUNC('month', CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show me weekly cost totals"
+    sql: |
+      SELECT DATE_TRUNC('week', TRY_TO_DATE(date))::DATE AS week_start,
+             SUM(cost) AS weekly_cost,
+             SUM(sessions) AS total_sessions,
+             SUM(messages) AS total_messages
+      FROM daily_summaries
+      GROUP BY 1
+      ORDER BY 1 DESC
+      LIMIT 12
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "How many sessions did I have each day this week?"
+    sql: |
+      SELECT date, sessions, user_turns, messages
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATE_TRUNC('week', CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my total token usage by day?"
+    sql: |
+      SELECT date,
+             input_tokens,
+             output_tokens,
+             cache_read_tokens,
+             cache_write_tokens,
+             input_tokens + output_tokens + cache_read_tokens + cache_write_tokens AS total_tokens
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATEADD('day', -14, CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show me lines of code written per day"
+    sql: |
+      SELECT date, loc_written, lines_added, lines_deleted,
+             files_created, files_edited
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATEADD('day', -30, CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my error rate trend?"
+    sql: |
+      SELECT date, errors, tool_calls,
+             ROUND(error_rate * 100, 1) AS error_rate_pct
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATEADD('day', -30, CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show my daily productivity summary"
+    sql: |
+      SELECT date, sessions, user_turns, tool_calls,
+             loc_written, cost,
+             ROUND(cost / NULLIF(sessions, 0), 2) AS cost_per_session,
+             ROUND(loc_written / NULLIF(sessions, 0), 0) AS loc_per_session
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATEADD('day', -14, CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "How many agent spawns and skill invocations per day?"
+    sql: |
+      SELECT date, agent_spawns, skill_invocations
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATEADD('day', -14, CURRENT_DATE())
+      ORDER BY date
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  # ---------------------------------------------------------------------------
+  # COST ANALYSIS (detailed, from turns table)
+  # ---------------------------------------------------------------------------
+
+  - question: "What is my total cost by model?"
+    sql: |
+      SELECT model,
+             COUNT(*) AS turns,
+             SUM(input_tokens) AS total_input_tokens,
+             SUM(output_tokens) AS total_output_tokens,
+             ROUND(SUM(cost), 2) AS total_cost
+      FROM turns
+      WHERE model IS NOT NULL AND model != ''
+      GROUP BY model
+      ORDER BY total_cost DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my cost by project?"
+    sql: |
+      SELECT s.project_display,
+             COUNT(DISTINCT s.session_id) AS sessions,
+             ROUND(SUM(t.cost), 2) AS total_cost
+      FROM sessions s
+      JOIN turns t ON t.session_id = s.session_id
+      GROUP BY s.project_display
+      ORDER BY total_cost DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What are my most expensive sessions?"
+    sql: |
+      SELECT s.session_id,
+             s.project_display,
+             TRY_TO_TIMESTAMP(s.first_timestamp) AS started_at,
+             s.duration_seconds,
+             COUNT(t.id) AS turn_count,
+             ROUND(SUM(t.cost), 2) AS session_cost
+      FROM sessions s
+      JOIN turns t ON t.session_id = s.session_id
+      GROUP BY s.session_id, s.project_display, s.first_timestamp, s.duration_seconds
+      ORDER BY session_cost DESC
+      LIMIT 20
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my average cost per session?"
+    sql: |
+      SELECT ROUND(AVG(session_cost), 2) AS avg_cost_per_session,
+             ROUND(MEDIAN(session_cost), 2) AS median_cost_per_session,
+             ROUND(MAX(session_cost), 2) AS max_cost
+      FROM (
+          SELECT s.session_id, SUM(t.cost) AS session_cost
+          FROM sessions s
+          JOIN turns t ON t.session_id = s.session_id
+          GROUP BY s.session_id
+      )
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show cost breakdown by input vs output tokens"
+    sql: |
+      SELECT model,
+             SUM(input_tokens) AS input_tokens,
+             SUM(output_tokens) AS output_tokens,
+             SUM(cache_read_tokens) AS cache_read_tokens,
+             ROUND(SUM(cost), 2) AS total_cost,
+             ROUND(SUM(cache_read_tokens)::FLOAT
+                   / NULLIF(SUM(input_tokens + cache_read_tokens), 0) * 100, 1)
+               AS cache_hit_rate_pct
+      FROM turns
+      WHERE model IS NOT NULL AND model != ''
+      GROUP BY model
+      ORDER BY total_cost DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  # ---------------------------------------------------------------------------
+  # SESSION ANALYSIS
+  # ---------------------------------------------------------------------------
+
+  - question: "How many sessions do I have by project?"
+    sql: |
+      SELECT project_display,
+             COUNT(*) AS session_count,
+             SUM(CASE WHEN is_agent = 1 THEN 1 ELSE 0 END) AS agent_sessions,
+             SUM(CASE WHEN is_agent = 0 THEN 1 ELSE 0 END) AS interactive_sessions,
+             ROUND(AVG(duration_seconds / 60.0), 1) AS avg_duration_min
+      FROM sessions
+      GROUP BY project_display
+      ORDER BY session_count DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my average session duration?"
+    sql: |
+      SELECT ROUND(AVG(duration_seconds / 60.0), 1) AS avg_minutes,
+             ROUND(MEDIAN(duration_seconds / 60.0), 1) AS median_minutes,
+             ROUND(MAX(duration_seconds / 3600.0), 1) AS max_hours
+      FROM sessions
+      WHERE duration_seconds > 0
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show my longest sessions"
+    sql: |
+      SELECT session_id,
+             project_display,
+             TRY_TO_TIMESTAMP(first_timestamp) AS started_at,
+             ROUND(duration_seconds / 3600.0, 1) AS duration_hours,
+             cc_version,
+             git_branch
+      FROM sessions
+      WHERE duration_seconds > 0
+      ORDER BY duration_seconds DESC
+      LIMIT 20
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "How many agent vs interactive sessions do I have?"
+    sql: |
+      SELECT CASE WHEN is_agent = 1 THEN 'Agent' ELSE 'Interactive' END AS session_type,
+             COUNT(*) AS session_count,
+             ROUND(AVG(duration_seconds / 60.0), 1) AS avg_duration_min
+      FROM sessions
+      GROUP BY is_agent
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Which Claude Code versions am I using?"
+    sql: |
+      SELECT cc_version,
+             COUNT(*) AS session_count,
+             MIN(TRY_TO_TIMESTAMP(first_timestamp))::DATE AS first_seen,
+             MAX(TRY_TO_TIMESTAMP(first_timestamp))::DATE AS last_seen
+      FROM sessions
+      WHERE cc_version IS NOT NULL AND cc_version != ''
+      GROUP BY cc_version
+      ORDER BY last_seen DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Which git branches have the most activity?"
+    sql: |
+      SELECT s.git_branch,
+             COUNT(DISTINCT s.session_id) AS sessions,
+             ROUND(SUM(t.cost), 2) AS total_cost
+      FROM sessions s
+      JOIN turns t ON t.session_id = s.session_id
+      WHERE s.git_branch IS NOT NULL AND s.git_branch != ''
+      GROUP BY s.git_branch
+      ORDER BY total_cost DESC
+      LIMIT 20
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show recent sessions"
+    sql: |
+      SELECT session_id,
+             project_display,
+             TRY_TO_TIMESTAMP(first_timestamp) AS started_at,
+             ROUND(duration_seconds / 60.0, 1) AS duration_min,
+             cc_version,
+             git_branch,
+             CASE WHEN is_agent = 1 THEN 'Agent' ELSE 'Interactive' END AS type
+      FROM sessions
+      ORDER BY first_timestamp DESC
+      LIMIT 25
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  # ---------------------------------------------------------------------------
+  # TOOL USAGE
+  # ---------------------------------------------------------------------------
+
+  - question: "What are my most used tools?"
+    sql: |
+      SELECT tool_name,
+             COUNT(*) AS call_count,
+             SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
+             SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures,
+             ROUND(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END)::FLOAT
+                   / NULLIF(COUNT(*), 0) * 100, 1) AS error_rate_pct
+      FROM tool_calls
+      GROUP BY tool_name
+      ORDER BY call_count DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What are the most common tool errors?"
+    sql: |
+      SELECT tool_name,
+             error_category,
+             COUNT(*) AS error_count,
+             MIN(error_message) AS sample_message
+      FROM tool_calls
+      WHERE success = 0
+        AND error_category IS NOT NULL AND error_category != ''
+      GROUP BY tool_name, error_category
+      ORDER BY error_count DESC
+      LIMIT 20
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Which tools write the most code?"
+    sql: |
+      SELECT tool_name,
+             COUNT(*) AS call_count,
+             SUM(loc_written) AS total_loc,
+             SUM(lines_added) AS total_added,
+             SUM(lines_deleted) AS total_deleted,
+             ROUND(AVG(loc_written), 1) AS avg_loc_per_call
+      FROM tool_calls
+      WHERE loc_written > 0
+      GROUP BY tool_name
+      ORDER BY total_loc DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What programming languages am I writing most?"
+    sql: |
+      SELECT language,
+             COUNT(*) AS file_operations,
+             SUM(loc_written) AS total_loc,
+             SUM(lines_added) AS lines_added,
+             SUM(lines_deleted) AS lines_deleted
+      FROM tool_calls
+      WHERE language IS NOT NULL AND language != ''
+      GROUP BY language
+      ORDER BY total_loc DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What files are most frequently edited?"
+    sql: |
+      SELECT file_path,
+             COUNT(*) AS edit_count,
+             SUM(loc_written) AS total_loc,
+             COUNT(DISTINCT session_id) AS sessions_touched
+      FROM tool_calls
+      WHERE file_path IS NOT NULL AND file_path != ''
+        AND tool_name IN ('Write', 'Edit')
+      GROUP BY file_path
+      ORDER BY edit_count DESC
+      LIMIT 20
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What Bash commands are most commonly run?"
+    sql: |
+      SELECT command_name,
+             COUNT(*) AS run_count,
+             SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures
+      FROM tool_calls
+      WHERE tool_name = 'Bash'
+        AND command_name IS NOT NULL AND command_name != ''
+      GROUP BY command_name
+      ORDER BY run_count DESC
+      LIMIT 20
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  # ---------------------------------------------------------------------------
+  # MODEL & TOKEN ANALYSIS
+  # ---------------------------------------------------------------------------
+
+  - question: "What is my token usage by model?"
+    sql: |
+      SELECT model,
+             COUNT(*) AS turns,
+             SUM(input_tokens) AS input_tokens,
+             SUM(output_tokens) AS output_tokens,
+             SUM(cache_read_tokens) AS cache_read_tokens,
+             SUM(cache_write_tokens) AS cache_write_tokens,
+             SUM(thinking_chars) AS thinking_chars,
+             ROUND(SUM(cost), 2) AS total_cost
+      FROM turns
+      WHERE model IS NOT NULL AND model != ''
+      GROUP BY model
+      ORDER BY total_cost DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my cache hit rate?"
+    sql: |
+      SELECT ROUND(
+               SUM(cache_read_tokens)::FLOAT
+               / NULLIF(SUM(input_tokens + cache_read_tokens), 0) * 100, 1
+             ) AS overall_cache_hit_rate_pct,
+             SUM(cache_read_tokens) AS cache_read_tokens,
+             SUM(input_tokens) AS uncached_input_tokens
+      FROM turns
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my cache hit rate by model?"
+    sql: |
+      SELECT model,
+             SUM(cache_read_tokens) AS cache_reads,
+             SUM(input_tokens) AS uncached_input,
+             ROUND(
+               SUM(cache_read_tokens)::FLOAT
+               / NULLIF(SUM(input_tokens + cache_read_tokens), 0) * 100, 1
+             ) AS cache_hit_rate_pct
+      FROM turns
+      WHERE model IS NOT NULL AND model != ''
+      GROUP BY model
+      ORDER BY cache_hit_rate_pct DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Which models use the most thinking?"
+    sql: |
+      SELECT model,
+             COUNT(*) AS turns_with_thinking,
+             SUM(thinking_chars) AS total_thinking_chars,
+             ROUND(AVG(thinking_chars), 0) AS avg_thinking_chars
+      FROM turns
+      WHERE thinking_chars > 0
+        AND model IS NOT NULL AND model != ''
+      GROUP BY model
+      ORDER BY total_thinking_chars DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What are the stop reasons for my turns?"
+    sql: |
+      SELECT stop_reason,
+             COUNT(*) AS turn_count,
+             ROUND(COUNT(*)::FLOAT / (SELECT COUNT(*) FROM turns) * 100, 1) AS pct
+      FROM turns
+      WHERE stop_reason IS NOT NULL AND stop_reason != ''
+      GROUP BY stop_reason
+      ORDER BY turn_count DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  # ---------------------------------------------------------------------------
+  # EXPERIMENT TAGS
+  # ---------------------------------------------------------------------------
+
+  - question: "What experiment tags do I have?"
+    sql: |
+      SELECT tag_name,
+             COUNT(DISTINCT session_id) AS sessions,
+             MIN(TRY_TO_TIMESTAMP(created_at))::DATE AS first_used,
+             MAX(TRY_TO_TIMESTAMP(created_at))::DATE AS last_used
+      FROM experiment_tags
+      GROUP BY tag_name
+      ORDER BY sessions DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Compare cost between experiment tags"
+    sql: |
+      SELECT et.tag_name,
+             COUNT(DISTINCT et.session_id) AS sessions,
+             ROUND(SUM(t.cost), 2) AS total_cost,
+             ROUND(AVG(session_costs.session_cost), 2) AS avg_cost_per_session
+      FROM experiment_tags et
+      JOIN (
+          SELECT session_id, SUM(cost) AS session_cost
+          FROM turns
+          GROUP BY session_id
+      ) session_costs ON session_costs.session_id = et.session_id
+      JOIN turns t ON t.session_id = et.session_id
+      GROUP BY et.tag_name
+      ORDER BY total_cost DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  # ---------------------------------------------------------------------------
+  # COMBINED / ADVANCED
+  # ---------------------------------------------------------------------------
+
+  - question: "What is my cost per line of code?"
+    sql: |
+      SELECT ROUND(SUM(d.cost) / NULLIF(SUM(d.loc_written), 0), 4) AS cost_per_loc,
+             SUM(d.cost) AS total_cost,
+             SUM(d.loc_written) AS total_loc
+      FROM daily_summaries d
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show me a summary of all my usage"
+    sql: |
+      SELECT COUNT(DISTINCT s.session_id) AS total_sessions,
+             SUM(d.messages) AS total_messages,
+             SUM(d.user_turns) AS total_user_turns,
+             SUM(d.tool_calls) AS total_tool_calls,
+             SUM(d.loc_written) AS total_loc_written,
+             ROUND(SUM(d.cost), 2) AS total_cost,
+             MIN(TRY_TO_DATE(d.date)) AS first_day,
+             MAX(TRY_TO_DATE(d.date)) AS last_day
+      FROM daily_summaries d
+      CROSS JOIN (SELECT COUNT(DISTINCT session_id) AS session_id FROM sessions) s
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my busiest day of the week?"
+    sql: |
+      SELECT DAYNAME(TRY_TO_DATE(date)) AS day_of_week,
+             DAYOFWEEK(TRY_TO_DATE(date)) AS day_num,
+             ROUND(AVG(sessions), 1) AS avg_sessions,
+             ROUND(AVG(cost), 2) AS avg_cost,
+             ROUND(AVG(loc_written), 0) AS avg_loc
+      FROM daily_summaries
+      GROUP BY 1, 2
+      ORDER BY day_num
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "What is my busiest hour of the day?"
+    sql: |
+      SELECT HOUR(TRY_TO_TIMESTAMP(timestamp)) AS hour_of_day,
+             COUNT(*) AS turn_count,
+             ROUND(SUM(cost), 2) AS total_cost
+      FROM turns
+      WHERE timestamp IS NOT NULL AND timestamp != ''
+      GROUP BY 1
+      ORDER BY 1
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Show me cost efficiency by project"
+    sql: |
+      WITH project_costs AS (
+          SELECT s.project_display,
+                 SUM(t.cost) AS total_cost,
+                 COUNT(DISTINCT s.session_id) AS sessions
+          FROM sessions s
+          JOIN turns t ON t.session_id = s.session_id
+          GROUP BY s.project_display
+      ),
+      project_loc AS (
+          SELECT s.project_display,
+                 SUM(tc.loc_written) AS total_loc
+          FROM sessions s
+          JOIN tool_calls tc ON tc.session_id = s.session_id
+          GROUP BY s.project_display
+      )
+      SELECT pc.project_display,
+             pc.sessions,
+             ROUND(pc.total_cost, 2) AS total_cost,
+             pl.total_loc,
+             ROUND(pc.total_cost / NULLIF(pl.total_loc, 0), 4) AS cost_per_loc,
+             ROUND(pc.total_cost / NULLIF(pc.sessions, 0), 2) AS cost_per_session
+      FROM project_costs pc
+      LEFT JOIN project_loc pl ON pl.project_display = pc.project_display
+      ORDER BY pc.total_cost DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
+
+  - question: "Compare this week to last week"
+    sql: |
+      SELECT CASE
+               WHEN TRY_TO_DATE(date) >= DATE_TRUNC('week', CURRENT_DATE()) THEN 'This Week'
+               ELSE 'Last Week'
+             END AS period,
+             SUM(sessions) AS sessions,
+             SUM(messages) AS messages,
+             SUM(loc_written) AS loc_written,
+             ROUND(SUM(cost), 2) AS cost,
+             SUM(errors) AS errors
+      FROM daily_summaries
+      WHERE TRY_TO_DATE(date) >= DATEADD('week', -1, DATE_TRUNC('week', CURRENT_DATE()))
+      GROUP BY 1
+      ORDER BY 1 DESC
+    verified_at: "2026-02-07"
+    verified_by: "ccwap"
