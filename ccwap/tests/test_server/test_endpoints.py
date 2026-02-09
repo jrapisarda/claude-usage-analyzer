@@ -1781,16 +1781,15 @@ class TestExperimentsEdgeCases:
     """Edge cases for the experiments endpoints."""
 
     async def test_create_tag_empty_session_ids(self, client):
-        """Empty session_ids list with no other criteria should tag by date/project (all sessions)."""
+        """Empty session_ids list with no criteria creates an empty smart tag."""
         resp = await client.post("/api/experiments/tags", json={
             "tag_name": "empty-list-tag",
             "session_ids": []
         })
         assert resp.status_code == 200
         data = resp.json()
-        # Empty session_ids falls through to date/project filtering
-        # With no filters, tags all sessions
-        assert data["sessions_tagged"] == 5
+        # No criteria and no session_ids = empty tag definition
+        assert data["sessions_tagged"] == 0
         # Cleanup
         await client.delete("/api/experiments/tags/empty-list-tag")
 
@@ -1834,8 +1833,12 @@ class TestExperimentsEdgeCases:
         resp = await client.get("/api/experiments/compare?tag_a=ma&tag_b=mb")
         data = resp.json()
         names = {m["metric_name"] for m in data["metrics"]}
-        expected = {"cost", "messages", "user_turns", "loc_written",
-                    "error_rate", "input_tokens", "output_tokens", "tool_calls"}
+        expected = {
+            "cost", "cost_per_kloc", "cache_hit_rate",
+            "loc_written", "loc_delivered", "files_created", "files_edited",
+            "input_tokens", "output_tokens", "tokens_per_loc", "thinking_chars",
+            "sessions", "user_turns", "tool_calls", "error_rate", "agent_spawns",
+        }
         assert names == expected
         await client.delete("/api/experiments/tags/ma")
         await client.delete("/api/experiments/tags/mb")

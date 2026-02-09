@@ -1,7 +1,21 @@
 """Pydantic models for experiments API."""
 
-from typing import List, Optional, Dict
+from typing import List, Optional
 from pydantic import BaseModel
+
+
+class TagCriteria(BaseModel):
+    """Stored criteria for a smart tag."""
+    description: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    project_path: Optional[str] = None
+    cc_version: Optional[str] = None
+    model: Optional[str] = None
+    min_cost: Optional[float] = None
+    max_cost: Optional[float] = None
+    min_loc: Optional[int] = None
+    max_loc: Optional[int] = None
 
 
 class ExperimentTag(BaseModel):
@@ -9,6 +23,8 @@ class ExperimentTag(BaseModel):
     tag_name: str
     session_count: int = 0
     created_at: Optional[str] = None
+    is_smart: bool = False
+    criteria: Optional[TagCriteria] = None
 
 
 class TagCreateRequest(BaseModel):
@@ -18,6 +34,13 @@ class TagCreateRequest(BaseModel):
     date_from: Optional[str] = None
     date_to: Optional[str] = None
     project_path: Optional[str] = None
+    cc_version: Optional[str] = None
+    model: Optional[str] = None
+    min_cost: Optional[float] = None
+    max_cost: Optional[float] = None
+    min_loc: Optional[int] = None
+    max_loc: Optional[int] = None
+    description: Optional[str] = None
 
 
 class TagDeleteRequest(BaseModel):
@@ -28,6 +51,7 @@ class TagDeleteRequest(BaseModel):
 class ComparisonMetric(BaseModel):
     """A single comparison metric between two tags."""
     metric_name: str
+    category: str = "general"
     tag_a_value: float = 0.0
     tag_b_value: float = 0.0
     absolute_delta: float = 0.0

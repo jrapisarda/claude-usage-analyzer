@@ -20,6 +20,7 @@ from ccwap.server.queries.experiment_queries import (
     compare_tags,
     compare_tags_multi,
     get_tag_sessions,
+    get_tag_criteria,
 )
 
 router = APIRouter(prefix="/api", tags=["experiments"])
@@ -45,6 +46,13 @@ async def create_experiment_tag(
         date_from=request.date_from,
         date_to=request.date_to,
         project_path=request.project_path,
+        cc_version=request.cc_version,
+        model=request.model,
+        min_cost=request.min_cost,
+        max_cost=request.max_cost,
+        min_loc=request.min_loc,
+        max_loc=request.max_loc,
+        description=request.description,
     )
     return {"tag_name": request.tag_name, "sessions_tagged": count}
 
@@ -59,6 +67,15 @@ async def delete_experiment_tag(
     if count == 0:
         raise HTTPException(status_code=404, detail=f"Tag '{tag_name}' not found")
     return {"tag_name": tag_name, "deleted_count": count}
+
+
+@router.get("/experiments/tags/{tag_name}/criteria")
+async def get_experiment_tag_criteria(
+    tag_name: str,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Get the stored criteria for a smart tag."""
+    return await get_tag_criteria(db, tag_name)
 
 
 @router.get("/experiments/compare", response_model=ComparisonResponse)

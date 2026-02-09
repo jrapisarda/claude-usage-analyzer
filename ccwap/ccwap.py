@@ -97,11 +97,28 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Experiment tags
     parser.add_argument('--tag', metavar='NAME',
-                       help='Tag current sessions')
+                       help='Tag sessions (smart tag if criteria provided)')
     parser.add_argument('--tag-range', metavar='NAME',
                        help='Tag date range')
     parser.add_argument('--compare-tags', nargs=2, metavar=('TAG_A', 'TAG_B'),
                        help='Compare two experiment tags')
+    parser.add_argument('--list-tags', action='store_true',
+                       help='List all experiment tags')
+
+    # Tag criteria filters (used with --tag)
+    tag_criteria = parser.add_argument_group('tag criteria')
+    tag_criteria.add_argument('--cc-version', metavar='VERSION',
+                             help='Filter by CC version (for --tag)')
+    tag_criteria.add_argument('--model', metavar='MODEL',
+                             help='Filter by model name (for --tag)')
+    tag_criteria.add_argument('--min-cost', type=float, metavar='AMOUNT',
+                             help='Minimum session cost (for --tag)')
+    tag_criteria.add_argument('--max-cost', type=float, metavar='AMOUNT',
+                             help='Maximum session cost (for --tag)')
+    tag_criteria.add_argument('--min-loc', type=int, metavar='LINES',
+                             help='Minimum LOC written (for --tag)')
+    tag_criteria.add_argument('--max-loc', type=int, metavar='LINES',
+                             help='Maximum LOC written (for --tag)')
 
     # Date filters
     date_filters = parser.add_argument_group('date filters')
@@ -425,9 +442,22 @@ def main():
             from ccwap.reports.trend import generate_trend
             print(generate_trend(conn, args.trend, config, args.last, color_enabled))
 
+        elif args.list_tags:
+            from ccwap.reports.tags import list_tags
+            print(list_tags(conn, color_enabled))
+
         elif args.tag:
             from ccwap.reports.tags import tag_sessions
-            count = tag_sessions(conn, args.tag, date_from=date_from, date_to=date_to)
+            count = tag_sessions(
+                conn, args.tag, date_from=date_from, date_to=date_to,
+                project=getattr(args, 'project', None),
+                cc_version=getattr(args, 'cc_version', None),
+                model=getattr(args, 'model', None),
+                min_cost=getattr(args, 'min_cost', None),
+                max_cost=getattr(args, 'max_cost', None),
+                min_loc=getattr(args, 'min_loc', None),
+                max_loc=getattr(args, 'max_loc', None),
+            )
             print(f"Tagged {count} sessions with '{args.tag}'")
 
         elif args.compare_tags:

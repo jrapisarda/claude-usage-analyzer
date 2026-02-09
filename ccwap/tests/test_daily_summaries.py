@@ -951,28 +951,28 @@ class TestSchemaV3Migration(unittest.TestCase):
         conn.close()
         db_path.unlink()
 
-    def test_schema_version_is_3(self):
-        """After ensure_database, schema version should be 3."""
+    def test_schema_version_is_4(self):
+        """After ensure_database, schema version should be 4."""
         temp_dir = tempfile.mkdtemp()
         db_path = Path(temp_dir) / 'test_version.db'
         conn = get_connection(db_path)
         ensure_database(conn)
 
-        self.assertEqual(get_schema_version(conn), 3)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 3)
+        self.assertEqual(get_schema_version(conn), 4)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 4)
 
         conn.close()
         db_path.unlink()
 
     def test_full_migration_from_v0(self):
-        """Starting from scratch (v0), ensure_database should reach v3."""
+        """Starting from scratch (v0), ensure_database should reach v4."""
         temp_dir = tempfile.mkdtemp()
         db_path = Path(temp_dir) / 'test_full.db'
         conn = get_connection(db_path)
 
         self.assertEqual(get_schema_version(conn), 0)
         ensure_database(conn)
-        self.assertEqual(get_schema_version(conn), 3)
+        self.assertEqual(get_schema_version(conn), 4)
 
         # Verify all tables and the new column exist
         cursor = conn.execute("PRAGMA table_info(turns)")

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 # Current schema version - increment when adding migrations
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
@@ -72,6 +72,12 @@ def ensure_database(conn: sqlite3.Connection) -> None:
     if current_version < 3:
         _migrate_v2_to_v3(conn)
         set_schema_version(conn, 3)
+        conn.commit()
+
+    # Migration v3 -> v4: Add tag_definitions table for smart tags
+    if current_version < 4:
+        _migrate_v3_to_v4(conn)
+        set_schema_version(conn, 4)
         conn.commit()
 
 
@@ -162,6 +168,24 @@ def _create_initial_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES sessions(session_id),
             UNIQUE(tag_name, session_id)
+        )
+    """)
+
+    # Tag definitions table - stored criteria for smart/dynamic tags
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tag_definitions (
+            tag_name TEXT PRIMARY KEY,
+            description TEXT,
+            date_from TEXT,
+            date_to TEXT,
+            project_path TEXT,
+            cc_version TEXT,
+            model TEXT,
+            min_cost REAL,
+            max_cost REAL,
+            min_loc INTEGER,
+            max_loc INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -336,12 +360,38 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """
+    Migration v3 -> v4: Add tag_definitions table for smart tags.
+
+    Stores filter criteria for dynamic tag evaluation. Existing
+    experiment_tags rows are preserved for manual session additions.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tag_definitions (
+            tag_name TEXT PRIMARY KEY,
+            description TEXT,
+            date_from TEXT,
+            date_to TEXT,
+            project_path TEXT,
+            cc_version TEXT,
+            model TEXT,
+            min_cost REAL,
+            max_cost REAL,
+            min_loc INTEGER,
+            max_loc INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+
 def drop_all_tables(conn: sqlite3.Connection) -> None:
     """Drop all tables (for testing or rebuild)."""
     tables = [
         "snapshots",
         "etl_state",
         "daily_summaries",
+        "tag_definitions",
         "experiment_tags",
         "tool_calls",
         "turns",

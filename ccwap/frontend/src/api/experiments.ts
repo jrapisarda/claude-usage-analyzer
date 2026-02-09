@@ -3,14 +3,30 @@ import { apiFetch, buildQuery } from './client'
 import { experimentKeys } from './keys'
 import type { DateRange } from '@/hooks/useDateRange'
 
+export interface TagCriteria {
+  description?: string | null
+  date_from?: string | null
+  date_to?: string | null
+  project_path?: string | null
+  cc_version?: string | null
+  model?: string | null
+  min_cost?: number | null
+  max_cost?: number | null
+  min_loc?: number | null
+  max_loc?: number | null
+}
+
 export interface ExperimentTag {
   tag_name: string
   session_count: number
   created_at: string | null
+  is_smart: boolean
+  criteria?: TagCriteria | null
 }
 
 export interface ComparisonMetric {
   metric_name: string
+  category: string
   tag_a_value: number
   tag_b_value: number
   absolute_delta: number
@@ -32,6 +48,13 @@ export interface TagCreatePayload {
   date_from?: string
   date_to?: string
   project_path?: string
+  cc_version?: string
+  model?: string
+  min_cost?: number
+  max_cost?: number
+  min_loc?: number
+  max_loc?: number
+  description?: string
 }
 
 export function useTags() {
@@ -77,8 +100,18 @@ export interface TagComparison {
   sessions: number
   cost: number
   loc: number
+  loc_delivered: number
   turns: number
   error_rate: number
+  cache_hit_rate: number
+  cost_per_kloc: number
+  tokens_per_loc: number
+  thinking_chars: number
+  agent_spawns: number
+  files_created: number
+  files_edited: number
+  input_tokens: number
+  output_tokens: number
 }
 
 export interface TagComparisonMultiResponse {

@@ -47,7 +47,7 @@ class TestSchemaCreation(unittest.TestCase):
         self.assertEqual(enabled, 1)
 
     def test_all_tables_created(self):
-        """Verify all 7 tables are created."""
+        """Verify all 8 tables are created."""
         ensure_database(self.conn)
 
         cursor = self.conn.execute("""
@@ -63,6 +63,7 @@ class TestSchemaCreation(unittest.TestCase):
             'experiment_tags',
             'sessions',
             'snapshots',
+            'tag_definitions',
             'tool_calls',
             'turns',
         ]
@@ -117,7 +118,7 @@ class TestSchemaCreation(unittest.TestCase):
             WHERE type='table' AND name NOT LIKE 'sqlite_%'
         """)
         table_count = cursor.fetchone()[0]
-        self.assertEqual(table_count, 7)
+        self.assertEqual(table_count, 8)
 
     def test_uuid_uniqueness_constraint(self):
         """Verify duplicate UUID inserts are rejected."""
