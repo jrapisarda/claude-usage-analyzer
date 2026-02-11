@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, Treemap,
   XAxis, YAxis, Tooltip,
@@ -11,8 +11,17 @@ import { ChartContainer } from '@/components/composite/ChartContainer'
 import { DataTable } from '@/components/composite/DataTable'
 import { ErrorState } from '@/components/composite/ErrorState'
 import { ExportDropdown } from '@/components/composite/ExportDropdown'
+import { SavedViewsBar } from '@/components/composite/SavedViewsBar'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useDateRange } from '@/hooks/useDateRange'
 import {
   useProductivity, useEfficiencyTrend, useLanguageTrend,
@@ -85,13 +94,28 @@ export default function ProductivityPage() {
   const { data: langTrendData } = useLanguageTrend(dateRange)
   const { data: toolSuccessData } = useToolSuccessTrend(dateRange)
   const { data: fileChurnData } = useFileChurn(dateRange)
+  const [focusLanguage, setFocusLanguage] = useState('__all__')
+  const [toolSearch, setToolSearch] = useState('')
+  const [activeTab, setActiveTab] = useState('efficiency')
+
+  const onApplySavedView = useCallback((filters: Record<string, unknown>) => {
+    setFocusLanguage(typeof filters.focus_language === 'string' ? filters.focus_language : '__all__')
+    setToolSearch(typeof filters.tool_search === 'string' ? filters.tool_search : '')
+    setActiveTab(typeof filters.active_tab === 'string' ? filters.active_tab : 'efficiency')
+  }, [])
+
+  const filteredLangTrend = useMemo(() => {
+    const rows = langTrendData ?? []
+    if (focusLanguage === '__all__') return rows
+    return rows.filter(r => r.language === focusLanguage)
+  }, [langTrendData, focusLanguage])
 
   // Pivot language trend data: group by date, one key per language
   const { pivotedLangData, langKeys } = useMemo(() => {
-    if (!langTrendData || langTrendData.length === 0) return { pivotedLangData: [], langKeys: [] as string[] }
-    const allLangs = [...new Set(langTrendData.map(d => d.language))]
+    if (!filteredLangTrend || filteredLangTrend.length === 0) return { pivotedLangData: [], langKeys: [] as string[] }
+    const allLangs = [...new Set(filteredLangTrend.map(d => d.language))]
     const grouped: Record<string, Record<string, number>> = {}
-    for (const row of langTrendData) {
+    for (const row of filteredLangTrend) {
       if (!grouped[row.date]) grouped[row.date] = { date: row.date } as any
       grouped[row.date][row.language] = row.loc_written
     }
@@ -100,7 +124,7 @@ export default function ProductivityPage() {
       allLangs,
     )
     return { pivotedLangData: pivoted, langKeys: allLangs }
-  }, [langTrendData])
+  }, [filteredLangTrend])
 
   // Pivot tool success trend: group by date, one line per tool (top 5)
   const { pivotedToolData, toolKeys } = useMemo(() => {
@@ -147,6 +171,13 @@ export default function ProductivityPage() {
   }
 
   const { summary, loc_trend, languages, tool_usage, error_analysis, file_hotspots } = data
+  const languageOptions = languages.map(l => l.language)
+  const filteredLanguages = focusLanguage === '__all__'
+    ? languages
+    : languages.filter(l => l.language === focusLanguage)
+  const filteredToolUsage = tool_usage.filter(t =>
+    t.tool_name.toLowerCase().includes(toolSearch.trim().toLowerCase())
+  )
 
   return (
     <PageLayout
@@ -157,11 +188,41 @@ export default function ProductivityPage() {
           page="productivity"
           getData={() => [
             ...(data?.loc_trend || []).map(t => ({ date: t.date, loc_written: t.loc_written, loc_delivered: t.loc_delivered })),
-            ...(data?.tool_usage || []).map(t => ({ type: 'tool', tool_name: t.tool_name, total_calls: t.total_calls, success_rate: t.success_rate })),
+            ...filteredToolUsage.map(t => ({ type: 'tool', tool_name: t.tool_name, total_calls: t.total_calls, success_rate: t.success_rate })),
           ]}
         />
       }
     >
+      <SavedViewsBar
+        page="productivity"
+        currentFilters={{ focus_language: focusLanguage, tool_search: toolSearch, active_tab: activeTab }}
+        onApply={onApplySavedView}
+        from={dateRange.from}
+        to={dateRange.to}
+        defaultMetricForAlert="error_rate"
+      />
+
+      <div className="rounded-md border border-border p-3 mb-6 flex flex-wrap items-center gap-3">
+        <span className="text-xs text-muted-foreground">View Filters</span>
+        <Select value={focusLanguage} onValueChange={setFocusLanguage}>
+          <SelectTrigger className="h-8 w-[220px]">
+            <SelectValue placeholder="All languages" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All languages</SelectItem>
+            {languageOptions.map(language => (
+              <SelectItem key={language} value={language}>{language}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Input
+          value={toolSearch}
+          onChange={e => setToolSearch(e.target.value)}
+          placeholder="Filter tools..."
+          className="h-8 w-[220px]"
+        />
+      </div>
+
       {/* Summary Cards */}
       <MetricCardGrid className="mb-6">
         <MetricCard title="LOC Written" value={formatNumber(summary.total_loc_written)} />
@@ -201,10 +262,10 @@ export default function ProductivityPage() {
         <ChartContainer
           title="Languages"
           height={256}
-          isEmpty={languages.length === 0}
+          isEmpty={filteredLanguages.length === 0}
           emptyMessage="No language data"
         >
-          <BarChart data={languages.slice(0, 10)} layout="vertical">
+          <BarChart data={filteredLanguages.slice(0, 10)} layout="vertical">
             <XAxis type="number" tick={{ fontSize: 11 }} stroke="var(--color-muted-foreground)" />
             <YAxis type="category" dataKey="language" tick={{ fontSize: 10 }} width={80} stroke="var(--color-muted-foreground)" />
             <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -218,7 +279,7 @@ export default function ProductivityPage() {
         <div className="mb-6">
           <DataTable
             columns={toolColumns}
-            data={tool_usage}
+            data={filteredToolUsage}
             emptyMessage="No tool usage data"
           />
         </div>
@@ -275,7 +336,7 @@ export default function ProductivityPage() {
       </div>
 
       {/* Trend Charts - Tabbed */}
-      <Tabs defaultValue="efficiency" className="mb-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
         <TabsList>
           <TabsTrigger value="efficiency">LOC Efficiency</TabsTrigger>
           <TabsTrigger value="language">Language Trend</TabsTrigger>

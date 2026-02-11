@@ -84,3 +84,17 @@ export const explorerKeys = {
     ['explorer', 'drilldown', params.metric, params.group_by, params.group_value, params.split_by, params.split_value, params.from, params.to, params.projects, params.models, params.branches, params.languages, params.page, params.limit] as const,
   filters: (from: string | null, to: string | null) => ['explorer', 'filters', from, to] as const,
 }
+
+export const advancedKeys = {
+  reliability: (range: DateRange) => ['advanced', 'reliability', range.from, range.to] as const,
+  branchHealth: (range: DateRange, branches?: string | null) =>
+    ['advanced', 'branch-health', range.from, range.to, branches] as const,
+  promptEfficiency: (range: DateRange) => ['advanced', 'prompt-efficiency', range.from, range.to] as const,
+  workflowBottlenecks: (range: DateRange) => ['advanced', 'workflow-bottlenecks', range.from, range.to] as const,
+}
+
+export const savedViewKeys = {
+  views: (page: string) => ['saved-views', page] as const,
+  alerts: (page?: string | null) => ['alert-rules', page] as const,
+  alertEval: (page: string, from: string | null, to: string | null) => ['alert-rules', 'evaluate', page, from, to] as const,
+}

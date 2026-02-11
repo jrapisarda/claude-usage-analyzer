@@ -10,6 +10,7 @@ async def get_db_stats(db: aiosqlite.Connection) -> Dict[str, int]:
     tables = [
         "sessions", "turns", "tool_calls", "experiment_tags",
         "daily_summaries", "etl_state", "snapshots",
+        "saved_views", "alert_rules",
     ]
     stats = {}
     for table in tables:

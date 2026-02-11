@@ -26,6 +26,7 @@ router = APIRouter(prefix="/api", tags=["settings"])
 EXPORT_TABLES = [
     "sessions", "turns", "tool_calls", "experiment_tags",
     "daily_summaries", "etl_state", "snapshots",
+    "saved_views", "alert_rules",
 ]
 
 

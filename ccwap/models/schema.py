@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 # Current schema version - increment when adding migrations
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
@@ -84,6 +84,12 @@ def ensure_database(conn: sqlite3.Connection) -> None:
     if current_version < 5:
         _migrate_v4_to_v5(conn)
         set_schema_version(conn, 5)
+        conn.commit()
+
+    # Migration v5 -> v6: Add persisted saved views and alert rules
+    if current_version < 6:
+        _migrate_v5_to_v6(conn)
+        set_schema_version(conn, 6)
         conn.commit()
 
 
@@ -466,6 +472,44 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """
+    Migration v5 -> v6: Add saved views and alert rules tables.
+
+    Persists reusable UI filters and threshold-based alert configurations.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS saved_views (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            page TEXT NOT NULL,
+            filters_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alert_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            page TEXT NOT NULL,
+            metric TEXT NOT NULL,
+            operator TEXT NOT NULL,
+            threshold REAL NOT NULL,
+            filters_json TEXT NOT NULL DEFAULT '{}',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_saved_views_page
+        ON saved_views(page)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_alert_rules_page_enabled
+        ON alert_rules(page, enabled)
+    """)
+
+
 def drop_all_tables(conn: sqlite3.Connection) -> None:
     """Drop all tables (for testing or rebuild)."""
     tables = [
@@ -473,6 +517,8 @@ def drop_all_tables(conn: sqlite3.Connection) -> None:
         "etl_state",
         "daily_summaries",
         "sessions_agg_daily",
+        "alert_rules",
+        "saved_views",
         "tool_calls_agg_daily",
         "turns_agg_daily",
         "tag_definitions",

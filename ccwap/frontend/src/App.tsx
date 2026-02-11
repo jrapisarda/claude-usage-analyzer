@@ -24,6 +24,10 @@ const ModelComparisonPage = lazy(() => import('@/pages/ModelComparisonPage'))
 const WorkflowPage = lazy(() => import('@/pages/WorkflowPage'))
 const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'))
 const ExplorerPage = lazy(() => import('@/pages/ExplorerPage'))
+const ReliabilityPage = lazy(() => import('@/pages/ReliabilityPage'))
+const BranchHealthPage = lazy(() => import('@/pages/BranchHealthPage'))
+const PromptEfficiencyPage = lazy(() => import('@/pages/PromptEfficiencyPage'))
+const WorkflowBottleneckPage = lazy(() => import('@/pages/WorkflowBottleneckPage'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -77,6 +81,10 @@ function AppContent() {
               <Route path="/models" element={<ModelComparisonPage />} />
               <Route path="/workflows" element={<WorkflowPage />} />
               <Route path="/explorer" element={<ExplorerPage />} />
+              <Route path="/reliability" element={<ReliabilityPage />} />
+              <Route path="/branch-health" element={<BranchHealthPage />} />
+              <Route path="/prompt-efficiency" element={<PromptEfficiencyPage />} />
+              <Route path="/workflow-bottlenecks" element={<WorkflowBottleneckPage />} />
               <Route path="/experiments" element={<ExperimentsPage />} />
               <Route path="/live" element={<LiveMonitorPage />} />
               <Route path="/settings" element={<SettingsPage />} />

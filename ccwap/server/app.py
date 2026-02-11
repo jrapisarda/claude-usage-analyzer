@@ -21,6 +21,16 @@ from ccwap.server.websocket import ConnectionManager
 logger = logging.getLogger("ccwap.server")
 
 
+class ImmutableAssetFiles(StaticFiles):
+    """Serve hashed frontend bundles with long-lived immutable caching."""
+
+    async def get_response(self, path, scope):  # type: ignore[override]
+        response = await super().get_response(path, scope)
+        if getattr(response, "status_code", 200) == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage database connection lifecycle."""
@@ -149,6 +159,8 @@ def create_app(config: dict = None) -> FastAPI:
     from ccwap.server.routes.models_route import router as models_router
     from ccwap.server.routes.workflows import router as workflows_router
     from ccwap.server.routes.explorer import router as explorer_router
+    from ccwap.server.routes.advanced import router as advanced_router
+    from ccwap.server.routes.saved_views import router as saved_views_router
 
     app.include_router(health_router)
     app.include_router(dashboard_router)
@@ -164,6 +176,8 @@ def create_app(config: dict = None) -> FastAPI:
     app.include_router(models_router)
     app.include_router(workflows_router)
     app.include_router(explorer_router)
+    app.include_router(advanced_router)
+    app.include_router(saved_views_router)
 
     # Serve static assets and SPA fallback
     static_dir = Path(__file__).parent.parent / "static"
@@ -171,7 +185,7 @@ def create_app(config: dict = None) -> FastAPI:
         # Mount /assets for hashed JS/CSS bundles
         assets_dir = static_dir / "assets"
         if assets_dir.exists():
-            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+            app.mount("/assets", ImmutableAssetFiles(directory=str(assets_dir)), name="assets")
 
         # SPA catch-all: serve index.html for any non-API, non-asset path
         index_html = static_dir / "index.html"
@@ -181,7 +195,14 @@ def create_app(config: dict = None) -> FastAPI:
             # Serve actual static files (e.g. vite.svg) if they exist
             file_path = static_dir / full_path
             if full_path and file_path.exists() and file_path.is_file():
-                return FileResponse(file_path)
-            return FileResponse(index_html)
+                response = FileResponse(file_path)
+                response.headers["Cache-Control"] = "no-cache"
+                return response
+
+            response = FileResponse(index_html)
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
 
     return app

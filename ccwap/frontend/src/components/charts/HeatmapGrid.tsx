@@ -107,7 +107,7 @@ export function HeatmapGrid({
       {/* Floating tooltip */}
       {tooltip && (
         <div
-          className="fixed z-50 px-2 py-1 text-xs bg-card border border-border rounded shadow-md pointer-events-none"
+          className="fixed z-50 px-2 py-1 text-xs text-popover-foreground bg-popover border border-border rounded shadow-md pointer-events-none"
           style={{ left: tooltip.x, top: tooltip.y, transform: 'translate(-50%, -100%)' }}
         >
           {tooltip.text}

@@ -35,6 +35,8 @@ class DatabaseStats(BaseModel):
     daily_summaries: int = 0
     etl_state: int = 0
     snapshots: int = 0
+    saved_views: int = 0
+    alert_rules: int = 0
 
 
 class SettingsResponse(BaseModel):

@@ -75,3 +75,20 @@ body {
   color: var(--color-foreground);
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
+
+/* Recharts tooltip readability across themes */
+.recharts-default-tooltip {
+  background-color: var(--color-popover) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 6px !important;
+  color: var(--color-popover-foreground) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
+}
+
+.recharts-tooltip-label,
+.recharts-tooltip-item,
+.recharts-tooltip-item-name,
+.recharts-tooltip-item-value,
+.recharts-tooltip-item-separator {
+  color: var(--color-popover-foreground) !important;
+}

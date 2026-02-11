@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DataTablePagination } from '@/components/composite/DataTablePagination'
+import { cn } from '@/lib/utils'
 
 interface DataTablePaginationConfig {
   pageIndex: number
@@ -42,6 +43,8 @@ interface DataTableProps<TData, TValue> {
   pagination?: DataTablePaginationConfig
   sorting?: DataTableSortingConfig
   emptyMessage?: string
+  onRowClick?: (row: TData) => void
+  getRowClassName?: (row: TData) => string
 }
 
 export function DataTable<TData, TValue>({
@@ -51,6 +54,8 @@ export function DataTable<TData, TValue>({
   pagination,
   sorting: externalSorting,
   emptyMessage = 'No results.',
+  onRowClick,
+  getRowClassName,
 }: DataTableProps<TData, TValue>) {
   const [internalSorting, setInternalSorting] = useState<SortingState>(
     externalSorting
@@ -126,6 +131,11 @@ export function DataTable<TData, TValue>({
                 <TableRow
                   key={row.id}
                   data-state={row.getIsSelected() && 'selected'}
+                  className={cn(
+                    getRowClassName?.(row.original),
+                    onRowClick && 'cursor-pointer'
+                  )}
+                  onClick={() => onRowClick?.(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>

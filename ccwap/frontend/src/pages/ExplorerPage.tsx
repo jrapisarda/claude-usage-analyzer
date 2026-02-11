@@ -13,6 +13,7 @@ import { ChartContainer } from '@/components/composite/ChartContainer'
 import { DataTable } from '@/components/composite/DataTable'
 import { EmptyState } from '@/components/composite/EmptyState'
 import { ErrorState } from '@/components/composite/ErrorState'
+import { SavedViewsBar } from '@/components/composite/SavedViewsBar'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -27,13 +28,21 @@ import {
 } from '@/components/ui/select'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { useDateRange } from '@/hooks/useDateRange'
 import { useExplorer, useExplorerDrilldown, useExplorerFilters } from '@/api/explorer'
+import { useSessionReplay } from '@/api/sessions'
 import type { ExplorerParams, ExplorerDrilldownSession, FilterOption } from '@/api/explorer'
 import { TOOLTIP_STYLE, CHART_COLORS, fillZeros } from '@/lib/chartConfig'
 import { formatNumber, formatCurrency, formatDuration, cn } from '@/lib/utils'
 import { type ColumnDef } from '@tanstack/react-table'
-import { ChevronDown, X } from 'lucide-react'
+import { ChevronDown, ExternalLink, X } from 'lucide-react'
 
 // Metric definitions
 const METRICS = [
@@ -85,6 +94,29 @@ function formatValue(value: number, metric: string): string {
   if (metric === 'cost') return formatCurrency(value)
   if (metric === 'duration_seconds') return formatDuration(value)
   return formatNumber(value)
+}
+
+function toStringList(input: unknown): string[] {
+  if (Array.isArray(input)) {
+    return input.map(v => String(v).trim()).filter(Boolean)
+  }
+  if (typeof input === 'string') {
+    return input.split(',').map(v => v.trim()).filter(Boolean)
+  }
+  return []
+}
+
+function toNullableString(input: unknown): string | null {
+  if (typeof input !== 'string') return null
+  const trimmed = input.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function formatTimestamp(timestamp: string | null): string {
+  if (!timestamp) return 'N/A'
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) return timestamp
+  return parsed.toLocaleString()
 }
 
 // Multi-select dropdown component using Popover
@@ -177,6 +209,8 @@ export default function ExplorerPage() {
   const [selLanguages, setSelLanguages] = useState<string[]>([])
   const [selectedBucket, setSelectedBucket] = useState<{ group: string; split: string | null } | null>(null)
   const [drillPage, setDrillPage] = useState(1)
+  const [isDrillOpen, setIsDrillOpen] = useState(false)
+  const [selectedDrillSessionId, setSelectedDrillSessionId] = useState<string | null>(null)
 
   const allowedDims = getAllowedDims(metric)
 
@@ -205,20 +239,71 @@ export default function ExplorerPage() {
     page: drillPage,
     limit: DRILLDOWN_PAGE_SIZE,
   })
+  const { data: replayData, isLoading: replayLoading, error: replayError } = useSessionReplay(selectedDrillSessionId ?? '')
 
   useEffect(() => {
     setSelectedBucket(null)
     setDrillPage(1)
+    setIsDrillOpen(false)
+    setSelectedDrillSessionId(null)
   }, [metric, effectiveGroupBy, effectiveSplitBy, dateRange.from, dateRange.to, selProjects, selModels, selBranches, selLanguages])
+
+  useEffect(() => {
+    if (!selectedBucket || selectedDrillSessionId) return
+    const firstSessionId = drilldownData?.sessions?.[0]?.session_id ?? null
+    if (firstSessionId) {
+      setSelectedDrillSessionId(firstSessionId)
+    }
+  }, [selectedBucket, drilldownData?.sessions, selectedDrillSessionId])
 
   const isTimeSeries = effectiveGroupBy === 'date'
   const hasSplit = !!effectiveSplitBy
   const metricLabel = METRICS.find(m => m.value === metric)?.label ?? metric ?? ''
 
   const onSelectBucket = useCallback((group: string, split: string | null) => {
-    setSelectedBucket({ group, split })
+    const cleanedGroup = String(group ?? '').trim()
+    if (!cleanedGroup) return
+    setSelectedBucket({ group: cleanedGroup, split })
     setDrillPage(1)
+    setSelectedDrillSessionId(null)
+    setIsDrillOpen(true)
   }, [])
+
+  const onApplySavedView = useCallback((filters: Record<string, unknown>) => {
+    setMetric(toNullableString(filters.metric))
+    setGroupBy(toNullableString(filters.group_by))
+    setSplitBy(toNullableString(filters.split_by))
+    setSelProjects(toStringList(filters.projects))
+    setSelModels(toStringList(filters.models))
+    setSelBranches(toStringList(filters.branches))
+    setSelLanguages(toStringList(filters.languages))
+    setSelectedBucket(null)
+    setDrillPage(1)
+    setIsDrillOpen(false)
+    setSelectedDrillSessionId(null)
+  }, [])
+
+  const currentFilters = useMemo(() => ({
+    metric,
+    group_by: effectiveGroupBy,
+    split_by: effectiveSplitBy,
+    projects: selProjects,
+    models: selModels,
+    branches: selBranches,
+    languages: selLanguages,
+  }), [metric, effectiveGroupBy, effectiveSplitBy, selProjects, selModels, selBranches, selLanguages])
+
+  const onSelectTimePoint = useCallback((entry: any, split: string | null) => {
+    const groupValue = entry?.payload?.date ?? entry?.date
+    if (!groupValue) return
+    onSelectBucket(String(groupValue), split)
+  }, [onSelectBucket])
+
+  const onSelectCategoryPoint = useCallback((entry: any, split: string | null) => {
+    const groupValue = entry?.payload?.name ?? entry?.name
+    if (!groupValue) return
+    onSelectBucket(String(groupValue), split)
+  }, [onSelectBucket])
 
   // Pivot data for charts
   const { timeData, catData, pieData, treemapData, radarData, splitKeys, tableRows } = useMemo(() => {
@@ -290,7 +375,15 @@ export default function ExplorerPage() {
       {
         accessorKey: 'group',
         header: effectiveGroupBy ?? 'Group',
-        cell: ({ row }) => <span>{row.original.group}</span>,
+        cell: ({ row }) => (
+          <Button
+            variant="link"
+            className="h-auto p-0 text-left"
+            onClick={() => onSelectBucket(row.original.group, row.original.split ?? null)}
+          >
+            {row.original.group}
+          </Button>
+        ),
       },
     ]
     if (hasSplit) {
@@ -307,22 +400,6 @@ export default function ExplorerPage() {
         <span className="font-mono text-right block">{formatValue(row.original.value, metric!)}</span>
       ),
     })
-    cols.push({
-      id: 'actions',
-      header: '',
-      cell: ({ row }) => (
-        <div className="text-right">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2 text-xs"
-            onClick={() => onSelectBucket(row.original.group, row.original.split ?? null)}
-          >
-            Drill down
-          </Button>
-        </div>
-      ),
-    })
     return cols
   }, [effectiveGroupBy, effectiveSplitBy, hasSplit, metricLabel, metric, onSelectBucket])
 
@@ -331,15 +408,28 @@ export default function ExplorerPage() {
       accessorKey: 'session_id',
       header: 'Session',
       cell: ({ row }) => (
-        <Link to={`/sessions/${row.original.session_id}`} className="font-mono text-xs text-primary hover:underline">
+        <button
+          type="button"
+          className="font-mono text-xs text-primary hover:underline"
+          onClick={() => setSelectedDrillSessionId(row.original.session_id)}
+        >
           {row.original.session_id}
+        </button>
+      ),
+    },
+    {
+      id: 'open',
+      header: '',
+      cell: ({ row }) => (
+        <Link to={`/sessions/${row.original.session_id}`} className="inline-flex items-center text-muted-foreground hover:text-foreground" title="Open session page">
+          <ExternalLink className="h-3.5 w-3.5" />
         </Link>
       ),
     },
     {
       accessorKey: 'project',
       header: 'Project',
-      cell: ({ row }) => <span className="truncate block max-w-[220px]">{row.original.project}</span>,
+      cell: ({ row }) => <span className="truncate block max-w-[180px]">{row.original.project}</span>,
     },
     {
       accessorKey: 'bucket_value',
@@ -349,23 +439,6 @@ export default function ExplorerPage() {
       ),
     },
     {
-      accessorKey: 'total_cost',
-      header: () => <span className="text-right block">Total Cost</span>,
-      cell: ({ row }) => (
-        <span className="font-mono text-right block">{formatCurrency(row.original.total_cost)}</span>
-      ),
-    },
-    {
-      accessorKey: 'turns',
-      header: () => <span className="text-right block">Turns</span>,
-      cell: ({ row }) => <span className="font-mono text-right block">{formatNumber(row.original.turns)}</span>,
-    },
-    {
-      accessorKey: 'tool_calls',
-      header: () => <span className="text-right block">Tools</span>,
-      cell: ({ row }) => <span className="font-mono text-right block">{formatNumber(row.original.tool_calls)}</span>,
-    },
-    {
       accessorKey: 'errors',
       header: () => <span className="text-right block">Errors</span>,
       cell: ({ row }) => <span className="font-mono text-right block">{formatNumber(row.original.errors)}</span>,
@@ -373,7 +446,17 @@ export default function ExplorerPage() {
   ]), [metric, metricLabel])
 
   return (
+    <>
     <PageLayout title="Data Explorer" subtitle="Query any metric by any dimension">
+      <SavedViewsBar
+        page="explorer"
+        currentFilters={currentFilters}
+        onApply={onApplySavedView}
+        from={dateRange.from}
+        to={dateRange.to}
+        defaultMetricForAlert={metric ?? 'cost'}
+      />
+
       {/* Controls row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         <div>
@@ -512,7 +595,15 @@ export default function ExplorerPage() {
                   <XAxis dataKey="date" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Line type="monotone" dataKey="value" stroke={CHART_COLORS[0]} strokeWidth={2} dot={{ r: 3 }} name={metricLabel} />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke={CHART_COLORS[0]}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    name={metricLabel}
+                    onClick={(entry: any) => onSelectTimePoint(entry, null)}
+                  />
                 </LineChart>
               </ChartContainer>
               <ChartContainer title={`${metricLabel} Over Time`} height={320}>
@@ -526,7 +617,14 @@ export default function ExplorerPage() {
                   <XAxis dataKey="date" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Area type="monotone" dataKey="value" stroke={CHART_COLORS[0]} fill="url(#explorerGrad)" name={metricLabel} />
+                  <Area
+                    type="monotone"
+                    dataKey="value"
+                    stroke={CHART_COLORS[0]}
+                    fill="url(#explorerGrad)"
+                    name={metricLabel}
+                    onClick={(entry: any) => onSelectTimePoint(entry, null)}
+                  />
                 </AreaChart>
               </ChartContainer>
             </div>
@@ -542,7 +640,16 @@ export default function ExplorerPage() {
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Legend />
                   {splitKeys.map((k, i) => (
-                    <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} name={k} />
+                    <Line
+                      key={k}
+                      type="monotone"
+                      dataKey={k}
+                      stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                      strokeWidth={2}
+                      dot={false}
+                      name={k}
+                      onClick={(entry: any) => onSelectTimePoint(entry, k)}
+                    />
                   ))}
                 </LineChart>
               </ChartContainer>
@@ -553,7 +660,17 @@ export default function ExplorerPage() {
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Legend />
                   {splitKeys.map((k, i) => (
-                    <Area key={k} type="monotone" dataKey={k} stackId="1" stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.4} name={k} />
+                    <Area
+                      key={k}
+                      type="monotone"
+                      dataKey={k}
+                      stackId="1"
+                      stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                      fill={CHART_COLORS[i % CHART_COLORS.length]}
+                      fillOpacity={0.4}
+                      name={k}
+                      onClick={(entry: any) => onSelectTimePoint(entry, k)}
+                    />
                   ))}
                 </AreaChart>
               </ChartContainer>
@@ -568,7 +685,13 @@ export default function ExplorerPage() {
                   <XAxis type="number" tick={{ fontSize: 10 }} />
                   <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 10 }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Bar dataKey="value" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} name={metricLabel} />
+                  <Bar
+                    dataKey="value"
+                    fill={CHART_COLORS[0]}
+                    radius={[0, 4, 4, 0]}
+                    name={metricLabel}
+                    onClick={(entry: any) => onSelectCategoryPoint(entry, null)}
+                  />
                 </BarChart>
               </ChartContainer>
               <ChartContainer title={`${metricLabel} Distribution`} height={320}>
@@ -584,6 +707,7 @@ export default function ExplorerPage() {
                     paddingAngle={2}
                     label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`}
                     labelLine={{ strokeWidth: 1 }}
+                    onClick={(entry: any) => onSelectCategoryPoint(entry, null)}
                   >
                     {pieData.map((_: any, i: number) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -607,7 +731,18 @@ export default function ExplorerPage() {
                         stroke="var(--color-border)"
                         content={({ x, y, width, height, name, fill }: any) => (
                           <g>
-                            <rect x={x} y={y} width={width} height={height} fill={fill} rx={2} />
+                            <rect
+                              x={x}
+                              y={y}
+                              width={width}
+                              height={height}
+                              fill={fill}
+                              rx={2}
+                              className="cursor-pointer"
+                              onClick={() => {
+                                if (name) onSelectBucket(String(name), null)
+                              }}
+                            />
                             {width >= 30 && height >= 20 && (
                               <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="middle" fill="white" fontSize={10}>
                                 {String(name ?? '').slice(0, Math.floor(width / 7))}
@@ -633,7 +768,14 @@ export default function ExplorerPage() {
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Legend />
                   {splitKeys.map((k, i) => (
-                    <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[4, 4, 0, 0]} name={k} />
+                    <Bar
+                      key={k}
+                      dataKey={k}
+                      fill={CHART_COLORS[i % CHART_COLORS.length]}
+                      radius={[4, 4, 0, 0]}
+                      name={k}
+                      onClick={(entry: any) => onSelectCategoryPoint(entry, k)}
+                    />
                   ))}
                 </BarChart>
               </ChartContainer>
@@ -644,7 +786,14 @@ export default function ExplorerPage() {
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Legend />
                   {splitKeys.map((k, i) => (
-                    <Bar key={k} dataKey={k} stackId="stack" fill={CHART_COLORS[i % CHART_COLORS.length]} name={k} />
+                    <Bar
+                      key={k}
+                      dataKey={k}
+                      stackId="stack"
+                      fill={CHART_COLORS[i % CHART_COLORS.length]}
+                      name={k}
+                      onClick={(entry: any) => onSelectCategoryPoint(entry, k)}
+                    />
                   ))}
                 </BarChart>
               </ChartContainer>
@@ -669,83 +818,202 @@ export default function ExplorerPage() {
           <Card>
             <CardHeader className="pb-3 pt-4 px-4">
               <CardTitle className="text-sm font-medium text-muted-foreground">Raw Data</CardTitle>
-              <span className="text-xs text-muted-foreground">{tableRows.length} rows (max 100 shown)</span>
+              <span className="text-xs text-muted-foreground">Click a row to drill into sessions ({tableRows.length} rows, max 100 shown)</span>
             </CardHeader>
             <CardContent className="px-4 pb-4">
               <DataTable
                 columns={rawTableColumns}
                 data={tableRows.slice(0, 100)}
                 emptyMessage="No data"
+                onRowClick={(row: any) => onSelectBucket(row.group, row.split ?? null)}
+                getRowClassName={(row: any) => (
+                  selectedBucket
+                    && row.group === selectedBucket.group
+                    && (row.split ?? null) === (selectedBucket.split ?? null)
+                    ? 'bg-accent/40'
+                    : ''
+                )}
               />
             </CardContent>
           </Card>
 
-          {/* Drill-down table */}
-          <Card className="mt-6">
-            <CardHeader className="pb-3 pt-4 px-4">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Session Drill-down</CardTitle>
-              <span className="text-xs text-muted-foreground">
-                {selectedBucket
-                  ? `${effectiveGroupBy}: ${selectedBucket.group}${hasSplit ? ` | ${effectiveSplitBy}: ${selectedBucket.split ?? 'N/A'}` : ''}`
-                  : 'Select a row in Raw Data and click Drill down'}
-              </span>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-3">
-              {!selectedBucket ? (
-                <p className="text-sm text-muted-foreground">No bucket selected.</p>
-              ) : drilldownError ? (
-                <p className="text-sm text-destructive">{drilldownError.message}</p>
-              ) : (
-                <>
-                  <MetricCardGrid className="lg:grid-cols-3">
-                    <MetricCard title="Matching Sessions" value={formatNumber(drilldownData?.pagination.total_count ?? 0)} />
-                    <MetricCard
-                      title="Page"
-                      value={`${drilldownData?.pagination.page ?? drillPage} / ${Math.max(drilldownData?.pagination.total_pages ?? 1, 1)}`}
-                    />
-                    <MetricCard
-                      title="Bucket"
-                      value={selectedBucket.split
-                        ? `${selectedBucket.group} / ${selectedBucket.split}`
-                        : selectedBucket.group}
-                    />
-                  </MetricCardGrid>
-
-                  <DataTable
-                    columns={drilldownColumns}
-                    data={drilldownData?.sessions ?? []}
-                    isLoading={drilldownLoading}
-                    emptyMessage="No sessions for this bucket"
-                  />
-
-                  <div className="flex items-center justify-end gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setDrillPage(prev => Math.max(1, prev - 1))}
-                      disabled={drilldownLoading || drillPage <= 1}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setDrillPage(prev => prev + 1)}
-                      disabled={
-                        drilldownLoading
-                        || !drilldownData
-                        || drillPage >= (drilldownData.pagination.total_pages || 1)
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
         </>
       )}
     </PageLayout>
+
+    <Sheet open={isDrillOpen} onOpenChange={(open) => {
+      setIsDrillOpen(open)
+      if (!open) {
+        setSelectedDrillSessionId(null)
+      }
+    }}>
+      <SheetContent side="right" className="w-[95vw] sm:max-w-5xl p-0">
+        <div className="h-full flex flex-col">
+          <SheetHeader className="px-4 py-3 border-b border-border">
+            <SheetTitle className="text-base">Explorer Drill-down</SheetTitle>
+            <SheetDescription>
+              {selectedBucket
+                ? `${effectiveGroupBy}: ${selectedBucket.group}${hasSplit ? ` | ${effectiveSplitBy}: ${selectedBucket.split ?? 'N/A'}` : ''}`
+                : 'Select a chart bucket or data row'}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 flex-1 min-h-0">
+            <div className="border-b lg:border-b-0 lg:border-r border-border min-h-0 flex flex-col">
+              <div className="px-4 py-3 border-b border-border">
+                <MetricCardGrid className="grid-cols-3">
+                  <MetricCard title="Sessions" value={formatNumber(drilldownData?.pagination.total_count ?? 0)} />
+                  <MetricCard
+                    title="Page"
+                    value={`${drilldownData?.pagination.page ?? drillPage} / ${Math.max(drilldownData?.pagination.total_pages ?? 1, 1)}`}
+                  />
+                  <MetricCard title="Metric" value={metricLabel || 'N/A'} />
+                </MetricCardGrid>
+              </div>
+
+              <div className="p-3 min-h-0 flex-1 overflow-auto">
+                {!selectedBucket ? (
+                  <p className="text-sm text-muted-foreground">Select a bucket to load sessions.</p>
+                ) : drilldownError ? (
+                  <p className="text-sm text-destructive">{drilldownError.message}</p>
+                ) : (
+                  <>
+                    <DataTable
+                      columns={drilldownColumns}
+                      data={drilldownData?.sessions ?? []}
+                      isLoading={drilldownLoading}
+                      emptyMessage="No sessions for this bucket"
+                      onRowClick={(row) => setSelectedDrillSessionId(row.session_id)}
+                      getRowClassName={(row) => (
+                        selectedDrillSessionId === row.session_id ? 'bg-accent/40' : ''
+                      )}
+                    />
+
+                    <div className="flex items-center justify-end gap-2 mt-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDrillPage(prev => Math.max(1, prev - 1))}
+                        disabled={drilldownLoading || drillPage <= 1}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDrillPage(prev => prev + 1)}
+                        disabled={
+                          drilldownLoading
+                          || !drilldownData
+                          || drillPage >= (drilldownData.pagination.total_pages || 1)
+                        }
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex flex-col">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                <h3 className="text-sm font-medium text-muted-foreground">Turn and Tool Details</h3>
+                {selectedDrillSessionId && (
+                  <Link to={`/sessions/${selectedDrillSessionId}`} className="text-xs text-primary hover:underline">
+                    Open session page
+                  </Link>
+                )}
+              </div>
+              <ScrollArea className="flex-1 p-4">
+                {!selectedDrillSessionId ? (
+                  <p className="text-sm text-muted-foreground">Select a session to inspect replay details.</p>
+                ) : replayError ? (
+                  <p className="text-sm text-destructive">{replayError.message}</p>
+                ) : replayLoading || !replayData ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-24 w-full" />
+                    <Skeleton className="h-24 w-full" />
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-md border border-border p-3 bg-card">
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div><span className="text-muted-foreground">Session:</span> <span className="font-mono">{replayData.session_id}</span></div>
+                        <div><span className="text-muted-foreground">Branch:</span> {replayData.git_branch ?? 'unknown'}</div>
+                        <div><span className="text-muted-foreground">Project:</span> {replayData.project_display ?? replayData.project_path}</div>
+                        <div><span className="text-muted-foreground">Started:</span> {formatTimestamp(replayData.first_timestamp)}</div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 mt-3 text-xs">
+                        <div><span className="text-muted-foreground block">Cost</span><span className="font-mono">{formatCurrency(replayData.total_cost)}</span></div>
+                        <div><span className="text-muted-foreground block">Turns</span><span className="font-mono">{formatNumber(replayData.total_turns)}</span></div>
+                        <div><span className="text-muted-foreground block">Tools</span><span className="font-mono">{formatNumber(replayData.total_tool_calls)}</span></div>
+                        <div><span className="text-muted-foreground block">Errors</span><span className="font-mono">{formatNumber(replayData.total_errors)}</span></div>
+                      </div>
+                    </div>
+
+                    {replayData.turns.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No turns found for this session.</p>
+                    ) : replayData.turns.map((turn) => (
+                      <div key={turn.uuid} className="rounded-md border border-border p-3 bg-card">
+                        <div className="flex items-center justify-between gap-2 text-xs mb-2">
+                          <span className="font-mono">{turn.uuid}</span>
+                          <span className="text-muted-foreground">{formatTimestamp(turn.timestamp)}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs mb-2">
+                          <span className="rounded border border-border px-2 py-0.5">{turn.entry_type}</span>
+                          {turn.model && <span className="rounded border border-border px-2 py-0.5">{turn.model}</span>}
+                          <span className="rounded border border-border px-2 py-0.5">Cost {formatCurrency(turn.cost)}</span>
+                          {turn.stop_reason && <span className="rounded border border-border px-2 py-0.5">Stop {turn.stop_reason}</span>}
+                        </div>
+
+                        {turn.user_prompt_preview && (
+                          <p className="text-xs text-muted-foreground mb-2">Prompt: {turn.user_prompt_preview}</p>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2 text-xs mb-2">
+                          <span>Input {formatNumber(turn.input_tokens)}</span>
+                          <span>Output {formatNumber(turn.output_tokens)}</span>
+                          <span>Cache Read {formatNumber(turn.cache_read_tokens)}</span>
+                          <span>Thinking {formatNumber(turn.thinking_chars)}</span>
+                        </div>
+
+                        {turn.tool_calls.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {turn.tool_calls.map((tc, idx) => (
+                              <div key={`${turn.uuid}-${idx}`} className="rounded border border-border/80 px-2 py-1.5 text-xs bg-background/60">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium">{tc.tool_name}</span>
+                                  <span className={tc.success ? 'text-green-600' : 'text-destructive'}>
+                                    {tc.success ? 'success' : 'failed'}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-2 mt-1 text-muted-foreground">
+                                  {tc.language && <span>{tc.language}</span>}
+                                  {tc.file_path && <span className="font-mono">{tc.file_path}</span>}
+                                  <span>LOC {formatNumber(tc.loc_written)}</span>
+                                  <span>+{formatNumber(tc.lines_added)} / -{formatNumber(tc.lines_deleted)}</span>
+                                </div>
+                                {!tc.success && tc.error_category && (
+                                  <p className="text-destructive mt-1">{tc.error_category}{tc.error_message ? `: ${tc.error_message}` : ''}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No tool calls on this turn.</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+    </>
   )
 }

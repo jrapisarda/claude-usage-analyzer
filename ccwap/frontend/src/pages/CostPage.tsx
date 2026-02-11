@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ReferenceLine, ReferenceDot,
@@ -8,7 +9,15 @@ import { MetricCardGrid } from '@/components/composite/MetricCardGrid'
 import { ChartContainer } from '@/components/composite/ChartContainer'
 import { ErrorState } from '@/components/composite/ErrorState'
 import { ExportDropdown } from '@/components/composite/ExportDropdown'
+import { SavedViewsBar } from '@/components/composite/SavedViewsBar'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useDateRange } from '@/hooks/useDateRange'
 import { useCostAnalysis, useCostAnomalies, useCumulativeCost } from '@/api/cost'
 import { BudgetTracker } from '@/components/BudgetTracker'
@@ -30,6 +39,8 @@ export default function CostPage() {
   const { data: anomalies } = useCostAnomalies(dateRange)
   const { data: cumulative } = useCumulativeCost(dateRange)
   const [budget] = useLocalStorage('ccwap:monthly-budget', 0)
+  const [focusModel, setFocusModel] = useState('__all__')
+  const [focusProject, setFocusProject] = useState('__all__')
 
   if (error) return <ErrorState message={error.message} />
 
@@ -44,6 +55,20 @@ export default function CostPage() {
   const { summary, by_token_type, by_model, trend, by_project, cache_savings, forecast } = data
   const anomalyPoints = anomalies?.filter(a => a.is_anomaly) ?? []
   const anomalyThreshold = anomalies && anomalies.length > 0 ? anomalies[0].threshold : 0
+  const modelOptions = by_model.map(m => m.model)
+  const projectOptions = by_project.map(p => p.project_display)
+  const filteredByModel = focusModel === '__all__'
+    ? by_model
+    : by_model.filter(m => m.model === focusModel)
+  const filteredByProject = focusProject === '__all__'
+    ? by_project
+    : by_project.filter(p => p.project_display === focusProject)
+  const onApplySavedView = (filters: Record<string, unknown>) => {
+    const model = typeof filters.focus_model === 'string' ? filters.focus_model : '__all__'
+    const project = typeof filters.focus_project === 'string' ? filters.focus_project : '__all__'
+    setFocusModel(model)
+    setFocusProject(project)
+  }
 
   const tokenTypeData = [
     { name: 'Input', value: by_token_type.input_cost, color: TOKEN_COLORS.input },
@@ -61,12 +86,47 @@ export default function CostPage() {
           page="cost"
           getData={() => [
             ...trend.map(t => ({ date: t.date, cost: t.cost })),
-            ...by_model.map(m => ({ type: 'by_model', model: m.model, cost: m.cost })),
-            ...by_project.map(p => ({ type: 'by_project', project: p.project_display, cost: p.cost })),
+            ...filteredByModel.map(m => ({ type: 'by_model', model: m.model, cost: m.cost })),
+            ...filteredByProject.map(p => ({ type: 'by_project', project: p.project_display, cost: p.cost })),
           ]}
         />
       }
     >
+      <SavedViewsBar
+        page="cost"
+        currentFilters={{ focus_model: focusModel, focus_project: focusProject }}
+        onApply={onApplySavedView}
+        from={dateRange.from}
+        to={dateRange.to}
+        defaultMetricForAlert="total_cost"
+      />
+
+      <div className="rounded-md border border-border p-3 mb-6 flex flex-wrap items-center gap-3">
+        <span className="text-xs text-muted-foreground">View Filters</span>
+        <Select value={focusModel} onValueChange={setFocusModel}>
+          <SelectTrigger className="h-8 w-[240px]">
+            <SelectValue placeholder="All models" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All models</SelectItem>
+            {modelOptions.map(model => (
+              <SelectItem key={model} value={model}>{model}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={focusProject} onValueChange={setFocusProject}>
+          <SelectTrigger className="h-8 w-[240px]">
+            <SelectValue placeholder="All projects" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All projects</SelectItem>
+            {projectOptions.map(project => (
+              <SelectItem key={project} value={project}>{project}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       {/* Summary Cards */}
       <MetricCardGrid className="mb-6">
         <MetricCard title="Total Cost" value={formatCurrency(summary.total_cost)} />
@@ -145,10 +205,10 @@ export default function CostPage() {
         <ChartContainer
           title="Cost by Model"
           height={256}
-          isEmpty={by_model.length === 0}
+          isEmpty={filteredByModel.length === 0}
           emptyMessage="No model data"
         >
-          <BarChart data={by_model.slice(0, 10)} layout="vertical">
+          <BarChart data={filteredByModel.slice(0, 10)} layout="vertical">
             <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v: any) => `$${v ?? 0}`} stroke="var(--color-muted-foreground)" />
             <YAxis type="category" dataKey="model" tick={{ fontSize: 10 }} width={120} stroke="var(--color-muted-foreground)" />
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [v != null ? formatCurrency(v) : '', 'Cost']} />
@@ -160,10 +220,10 @@ export default function CostPage() {
         <ChartContainer
           title="Cost by Project (Top 10)"
           height={256}
-          isEmpty={by_project.length === 0}
+          isEmpty={filteredByProject.length === 0}
           emptyMessage="No project data"
         >
-          <BarChart data={by_project.slice(0, 10)} layout="vertical">
+          <BarChart data={filteredByProject.slice(0, 10)} layout="vertical">
             <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v: any) => `$${v ?? 0}`} stroke="var(--color-muted-foreground)" />
             <YAxis type="category" dataKey="project_display" tick={{ fontSize: 10 }} width={120} stroke="var(--color-muted-foreground)" />
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [v != null ? formatCurrency(v) : '', 'Cost']} />

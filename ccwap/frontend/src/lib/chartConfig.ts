@@ -1,9 +1,10 @@
 export const TOOLTIP_STYLE = {
-  backgroundColor: 'var(--color-card)',
-  color: 'var(--color-card-foreground)',
+  backgroundColor: 'var(--color-popover)',
+  color: 'var(--color-popover-foreground)',
   border: '1px solid var(--color-border)',
   borderRadius: '6px',
   fontSize: '12px',
+  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.18)',
 }
 
 export const AXIS_STYLE = {
