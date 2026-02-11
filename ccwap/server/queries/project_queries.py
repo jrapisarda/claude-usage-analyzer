@@ -65,7 +65,7 @@ async def get_projects(
             SUM(t.thinking_chars) as thinking_chars,
             SUM(t.cost) as cost,
             SUM(s.duration_seconds) / COUNT(DISTINCT t.session_id) as avg_duration,
-            COUNT(CASE WHEN s.is_agent = 1 THEN 1 END) as agent_turns
+            COUNT(DISTINCT CASE WHEN s.is_agent = 1 THEN s.session_id END) as agent_sessions
         FROM turns t
         JOIN sessions s ON t.session_id = s.session_id
         WHERE t.timestamp IS NOT NULL {turn_date_filter} {search_filter}

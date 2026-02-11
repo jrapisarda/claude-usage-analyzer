@@ -6,6 +6,7 @@ on an asyncio queue for broadcasting via WebSocket.
 """
 
 import asyncio
+import logging
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import Any, Dict, Optional
 
 from ccwap.etl.watcher import FileWatcher
 from ccwap.server.websocket import ConnectionManager
+
+logger = logging.getLogger("ccwap.server.file_watcher")
 
 
 def _query_latest_session(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -47,7 +50,7 @@ def _query_latest_session(config: Optional[Dict[str, Any]]) -> Optional[Dict[str
         finally:
             conn.close()
     except Exception:
-        pass
+        logger.exception("Failed to query latest session for websocket broadcast")
     return None
 
 
@@ -83,7 +86,7 @@ def _query_daily_cost(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
         finally:
             conn.close()
     except Exception:
-        pass
+        logger.exception("Failed to query daily cost for websocket broadcast")
     return None
 
 
@@ -127,6 +130,7 @@ async def run_daily_cost_broadcaster(
                 pass
 
         except Exception:
+            logger.exception("Daily cost broadcaster loop iteration failed")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval)
                 break
@@ -195,7 +199,7 @@ async def run_file_watcher(
                 pass  # Normal timeout, continue polling
 
         except Exception:
-            # Don't crash the background task on errors
+            logger.exception("File watcher loop iteration failed")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=poll_interval)
                 break

@@ -36,6 +36,37 @@ export interface ExplorerFiltersResponse {
   languages: FilterOption[]
 }
 
+export interface ExplorerDrilldownSession {
+  session_id: string
+  project: string
+  first_timestamp: string | null
+  user_type: string
+  branch: string
+  cc_version: string
+  bucket_value: number
+  total_cost: number
+  turns: number
+  tool_calls: number
+  errors: number
+}
+
+export interface ExplorerDrilldownResponse {
+  bucket: {
+    metric: string
+    group_by: string
+    group_value: string
+    split_by: string | null
+    split_value: string | null
+  }
+  sessions: ExplorerDrilldownSession[]
+  pagination: {
+    page: number
+    limit: number
+    total_count: number
+    total_pages: number
+  }
+}
+
 export interface ExplorerParams {
   metric: string | null
   group_by: string | null
@@ -46,6 +77,13 @@ export interface ExplorerParams {
   models?: string | null
   branches?: string | null
   languages?: string | null
+}
+
+export interface ExplorerDrilldownParams extends ExplorerParams {
+  group_value: string | null
+  split_value?: string | null
+  page?: number
+  limit?: number
 }
 
 export function useExplorer(params: ExplorerParams) {
@@ -65,6 +103,33 @@ export function useExplorer(params: ExplorerParams) {
       })}`
     ),
     enabled: !!params.metric && !!params.group_by,
+  })
+}
+
+export function useExplorerDrilldown(params: ExplorerDrilldownParams) {
+  return useQuery({
+    queryKey: explorerKeys.drilldown(params),
+    queryFn: () => apiFetch<ExplorerDrilldownResponse>(
+      `/explorer/drilldown${buildQuery({
+        metric: params.metric,
+        group_by: params.group_by,
+        group_value: params.group_value,
+        split_by: params.split_by,
+        split_value: params.split_value,
+        from: params.from,
+        to: params.to,
+        projects: params.projects,
+        models: params.models,
+        branches: params.branches,
+        languages: params.languages,
+        page: params.page ?? 1,
+        limit: params.limit ?? 25,
+      })}`
+    ),
+    enabled: !!params.metric
+      && !!params.group_by
+      && !!params.group_value
+      && (!params.split_by || !!params.split_value),
   })
 }
 

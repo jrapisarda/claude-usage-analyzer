@@ -82,6 +82,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "table_max_width": 120
     },
 
+    # Feature flags for optional/experimental capabilities.
+    "feature_flags": {
+        "analytics_materialized_enabled": False
+    },
+
     # Pricing version for audit trail
     "pricing_version": "2026-02-01"
 }
@@ -131,7 +136,7 @@ def load_config() -> Dict[str, Any]:
                         config['pricing'][model] = prices
 
             # Shallow merge other sections
-            for key in ['budget_alerts', 'display']:
+            for key in ['budget_alerts', 'display', 'feature_flags']:
                 if key in user_config and isinstance(user_config[key], dict):
                     config[key].update(user_config[key])
 

@@ -434,6 +434,10 @@ CCWAP uses `~/.ccwap/config.json` for configuration. All fields are optional wit
     "table_max_width": 120
   },
 
+  "feature_flags": {
+    "analytics_materialized_enabled": false
+  },
+
   "pricing_version": "2026-02-01"
 }
 ```
@@ -460,6 +464,11 @@ CCWAP uses `~/.ccwap/config.json` for configuration. All fields are optional wit
 - `color_enabled`: Enable/disable colored output
 - `progress_threshold_mb`: Show progress bar for files larger than this (MB)
 - `table_max_width`: Maximum table width for reports
+
+**Feature flags:**
+- `feature_flags.analytics_materialized_enabled`: Use optional materialized aggregate tables for Explorer analytics queries.
+  - Keep `false` until you've run a backfill.
+  - Backfill command: `python scripts/backfill_materialized_analytics.py`
 
 ## Database Schema
 

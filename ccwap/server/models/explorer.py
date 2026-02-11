@@ -3,6 +3,8 @@
 from typing import List, Optional, Literal
 from pydantic import BaseModel
 
+from ccwap.server.models.common import PaginationMeta
+
 
 MetricType = Literal[
     # Turns metrics
@@ -101,3 +103,34 @@ class ExplorerFiltersResponse(BaseModel):
     models: List[FilterOption] = []
     branches: List[FilterOption] = []
     languages: List[FilterOption] = []
+
+
+class ExplorerDrilldownSession(BaseModel):
+    """Session-level detail for a selected explorer bucket."""
+    session_id: str
+    project: str
+    first_timestamp: Optional[str] = None
+    user_type: str
+    branch: str
+    cc_version: str
+    bucket_value: float = 0.0
+    total_cost: float = 0.0
+    turns: int = 0
+    tool_calls: int = 0
+    errors: int = 0
+
+
+class ExplorerDrilldownBucket(BaseModel):
+    """Selected explorer bucket context."""
+    metric: str
+    group_by: str
+    group_value: str
+    split_by: Optional[str] = None
+    split_value: Optional[str] = None
+
+
+class ExplorerDrilldownResponse(BaseModel):
+    """Explorer drill-down response with paginated sessions."""
+    bucket: ExplorerDrilldownBucket
+    sessions: List[ExplorerDrilldownSession] = []
+    pagination: PaginationMeta

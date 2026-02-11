@@ -21,7 +21,8 @@ export default defineConfig({
   },
   build: {
     outDir: '../static',
-    emptyOutDir: true,
+    // Keep prior hashed assets so clients with cached entry chunks don't 404 mid-deploy.
+    emptyOutDir: false,
     rollupOptions: {
       output: {
         manualChunks: {

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 # Current schema version - increment when adding migrations
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
@@ -78,6 +78,12 @@ def ensure_database(conn: sqlite3.Connection) -> None:
     if current_version < 4:
         _migrate_v3_to_v4(conn)
         set_schema_version(conn, 4)
+        conn.commit()
+
+    # Migration v4 -> v5: Add optional materialized aggregate tables for analytics explorer
+    if current_version < 5:
+        _migrate_v4_to_v5(conn)
+        set_schema_version(conn, 5)
         conn.commit()
 
 
@@ -385,12 +391,90 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """
+    Migration v4 -> v5: Add optional materialized aggregate tables.
+
+    These tables are intentionally separate from the canonical source tables and
+    are populated by an explicit backfill job behind a feature flag.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS turns_agg_daily (
+            date TEXT NOT NULL,
+            model TEXT NOT NULL,
+            project TEXT NOT NULL,
+            branch TEXT NOT NULL,
+            cc_version TEXT NOT NULL,
+            entry_type TEXT NOT NULL,
+            is_agent TEXT NOT NULL,
+            cost REAL DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            ephemeral_5m_tokens INTEGER DEFAULT 0,
+            ephemeral_1h_tokens INTEGER DEFAULT 0,
+            thinking_chars INTEGER DEFAULT 0,
+            turns_count INTEGER DEFAULT 0,
+            PRIMARY KEY (date, model, project, branch, cc_version, entry_type, is_agent)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tool_calls_agg_daily (
+            date TEXT NOT NULL,
+            model TEXT NOT NULL,
+            project TEXT NOT NULL,
+            branch TEXT NOT NULL,
+            language TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            cc_version TEXT NOT NULL,
+            entry_type TEXT NOT NULL,
+            is_agent TEXT NOT NULL,
+            loc_written INTEGER DEFAULT 0,
+            tool_calls_count INTEGER DEFAULT 0,
+            errors INTEGER DEFAULT 0,
+            lines_added INTEGER DEFAULT 0,
+            lines_deleted INTEGER DEFAULT 0,
+            PRIMARY KEY (date, model, project, branch, language, tool_name, cc_version, entry_type, is_agent)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sessions_agg_daily (
+            date TEXT NOT NULL,
+            project TEXT NOT NULL,
+            branch TEXT NOT NULL,
+            cc_version TEXT NOT NULL,
+            is_agent TEXT NOT NULL,
+            sessions_count INTEGER DEFAULT 0,
+            duration_seconds INTEGER DEFAULT 0,
+            PRIMARY KEY (date, project, branch, cc_version, is_agent)
+        )
+    """)
+
+    # Date-leading indexes for range scans.
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_turns_agg_daily_date
+        ON turns_agg_daily(date)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_agg_daily_date
+        ON tool_calls_agg_daily(date)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sessions_agg_daily_date
+        ON sessions_agg_daily(date)
+    """)
+
+
 def drop_all_tables(conn: sqlite3.Connection) -> None:
     """Drop all tables (for testing or rebuild)."""
     tables = [
         "snapshots",
         "etl_state",
         "daily_summaries",
+        "sessions_agg_daily",
+        "tool_calls_agg_daily",
+        "turns_agg_daily",
         "tag_definitions",
         "experiment_tags",
         "tool_calls",

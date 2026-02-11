@@ -1,0 +1,1 @@
+import{u}from"./query-vendor-ChV-W4bE.js";import{s as o,h as y,i}from"./index-Bpa7eUOS.js";function a(s,e,r=1){return u({queryKey:o.list(s,e,r),queryFn:()=>y(`/sessions${i({from:s.from,to:s.to,project:e,page:r})}`)})}function f(s){return u({queryKey:o.replay(s),queryFn:()=>y(`/sessions/${s}/replay`),enabled:!!s})}export{f as a,a as u};

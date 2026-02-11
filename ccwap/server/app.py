@@ -5,6 +5,7 @@ Creates the app with all routes, lifespan management, and static file serving.
 """
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from ccwap.config.loader import load_config, get_database_path
 from ccwap.models.schema import ensure_database, get_connection
 from ccwap.server.websocket import ConnectionManager
+
+logger = logging.getLogger("ccwap.server")
 
 
 @asynccontextmanager
@@ -81,7 +84,7 @@ async def _run_watcher_safe(manager, config, stop_event):
         from ccwap.server.file_watcher import run_file_watcher
         await run_file_watcher(manager, config=config, poll_interval=5, stop_event=stop_event)
     except Exception:
-        pass  # Don't crash if watcher fails (e.g., missing files dir)
+        logger.exception("Background file watcher crashed")
 
 
 async def _run_cost_broadcaster_safe(manager, config, stop_event):
@@ -90,7 +93,7 @@ async def _run_cost_broadcaster_safe(manager, config, stop_event):
         from ccwap.server.file_watcher import run_daily_cost_broadcaster
         await run_daily_cost_broadcaster(manager, config=config, interval=30, stop_event=stop_event)
     except Exception:
-        pass  # Don't crash if cost broadcaster fails
+        logger.exception("Daily cost broadcaster crashed")
 
 
 def create_app(config: dict = None) -> FastAPI:
@@ -106,9 +109,6 @@ def create_app(config: dict = None) -> FastAPI:
         app.state.config = config
 
     # Global exception handler
-    import logging
-    logger = logging.getLogger("ccwap.server")
-
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
@@ -131,6 +131,7 @@ def create_app(config: dict = None) -> FastAPI:
         except WebSocketDisconnect:
             await manager.disconnect(websocket)
         except Exception:
+            logger.exception("WebSocket /ws/live handler error")
             await manager.disconnect(websocket)
 
     # Include all API routers BEFORE mounting static files

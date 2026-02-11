@@ -66,7 +66,7 @@ async def get_user_type_trend(
 
     query = f"""
         SELECT
-            DATE(s.first_timestamp) as date,
+            date(s.first_timestamp, 'localtime') as date,
             CASE WHEN s.is_agent = 1 THEN 'agent' ELSE 'human' END as user_type,
             COUNT(*) as sessions,
             COALESCE(SUM(turn_agg.cost), 0) as cost
@@ -77,8 +77,8 @@ async def get_user_type_trend(
             GROUP BY session_id
         ) turn_agg ON turn_agg.session_id = s.session_id
         {where}
-        GROUP BY date, user_type
-        ORDER BY date
+        GROUP BY date(s.first_timestamp, 'localtime'), user_type
+        ORDER BY date(s.first_timestamp, 'localtime')
     """
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()
@@ -151,7 +151,7 @@ async def get_tool_sequences(
     date_to: Optional[str] = None,
     window: int = 3,
 ) -> List[Dict[str, Any]]:
-    """Find top tool call sequences using sliding window. Cap at 10000 rows."""
+    """Find top tool call sequences using per-session sliding windows."""
     conditions = []
     params = []
     date_params: list = []
@@ -162,7 +162,7 @@ async def get_tool_sequences(
     extra_where = f"AND {' AND '.join(conditions)}" if conditions else ""
 
     query = f"""
-        SELECT tc.tool_name
+        SELECT tc.session_id, tc.tool_name
         FROM tool_calls tc
         JOIN sessions s ON tc.session_id = s.session_id
         WHERE tc.tool_name IS NOT NULL {extra_where}
@@ -172,13 +172,21 @@ async def get_tool_sequences(
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()
 
-    tools = [r[0] for r in rows]
+    # Build ordered tool lists per session so windows never cross session boundaries.
+    session_tools: Dict[str, List[str]] = {}
+    for row in rows:
+        session_id = row[0]
+        tool_name = row[1]
+        session_tools.setdefault(session_id, []).append(tool_name)
 
-    # Sliding window
+    # Sliding window within each session.
     counter: Counter = Counter()
-    for i in range(len(tools) - window + 1):
-        seq = tuple(tools[i:i + window])
-        counter[seq] += 1
+    for tools in session_tools.values():
+        if len(tools) < window:
+            continue
+        for i in range(len(tools) - window + 1):
+            seq = tuple(tools[i:i + window])
+            counter[seq] += 1
 
     total = sum(counter.values()) or 1
     top = counter.most_common(10)

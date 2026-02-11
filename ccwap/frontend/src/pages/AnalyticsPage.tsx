@@ -1,5 +1,5 @@
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, Tooltip, Legend,
   PieChart, Pie, Cell, AreaChart, Area, LineChart, Line,
 } from 'recharts'
 import { PageLayout } from '@/components/layout/PageLayout'
@@ -151,7 +151,7 @@ export default function AnalyticsPage() {
               <XAxis dataKey="project" tick={{ fontSize: 9 }} interval={0} angle={-20} textAnchor="end" height={50} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Bar dataKey="sidechain_count" fill={CHART_COLORS[3]} name="Sidechains" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="sidechains" fill={CHART_COLORS[3]} name="Sidechains" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ChartContainer>
 

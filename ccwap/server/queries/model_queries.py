@@ -103,13 +103,13 @@ async def get_model_usage_trend(
 
     query = f"""
         SELECT
-            DATE(t.timestamp) as date,
+            date(t.timestamp, 'localtime') as date,
             t.model,
             COUNT(*) as count
         FROM turns t
         {where}
-        GROUP BY date, t.model
-        ORDER BY date
+        GROUP BY date(t.timestamp, 'localtime'), t.model
+        ORDER BY date(t.timestamp, 'localtime')
     """
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()

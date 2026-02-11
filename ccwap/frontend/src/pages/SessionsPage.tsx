@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Link, useSearchParams, useNavigate } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import type { ColumnDef } from '@tanstack/react-table'
 import { PageLayout } from '@/components/layout/PageLayout'
 import type { BreadcrumbItem } from '@/components/layout/Breadcrumbs'
@@ -132,7 +132,6 @@ const sessionColumns: ColumnDef<SessionListItem, unknown>[] = [
 
 export default function SessionsPage() {
   const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
   const project = searchParams.get('project') || undefined
   const { dateRange } = useDateRange()
   const [page, setPage] = useState(1)

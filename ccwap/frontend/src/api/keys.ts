@@ -80,5 +80,7 @@ export const explorerKeys = {
   all: ['explorer'] as const,
   query: (params: { metric: string | null; group_by: string | null; split_by?: string | null; from?: string | null; to?: string | null; projects?: string | null; models?: string | null; branches?: string | null; languages?: string | null }) =>
     ['explorer', 'query', params.metric, params.group_by, params.split_by, params.from, params.to, params.projects, params.models, params.branches, params.languages] as const,
+  drilldown: (params: { metric: string | null; group_by: string | null; group_value: string | null; split_by?: string | null; split_value?: string | null; from?: string | null; to?: string | null; projects?: string | null; models?: string | null; branches?: string | null; languages?: string | null; page?: number; limit?: number }) =>
+    ['explorer', 'drilldown', params.metric, params.group_by, params.group_value, params.split_by, params.split_value, params.from, params.to, params.projects, params.models, params.branches, params.languages, params.page, params.limit] as const,
   filters: (from: string | null, to: string | null) => ['explorer', 'filters', from, to] as const,
 }

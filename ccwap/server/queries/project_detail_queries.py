@@ -70,7 +70,7 @@ async def get_project_detail(
     # Query 2: Cost trend by date
     cost_query = f"""
         SELECT
-            DATE(s.first_timestamp) as date,
+            date(s.first_timestamp, 'localtime') as date,
             COALESCE(SUM(turn_agg.cost), 0) as cost
         FROM sessions s
         LEFT JOIN (
@@ -79,8 +79,8 @@ async def get_project_detail(
             GROUP BY session_id
         ) turn_agg ON turn_agg.session_id = s.session_id
         {where}
-        GROUP BY date
-        ORDER BY date
+        GROUP BY date(s.first_timestamp, 'localtime')
+        ORDER BY date(s.first_timestamp, 'localtime')
     """
     cursor = await db.execute(cost_query, params)
     cost_rows = await cursor.fetchall()

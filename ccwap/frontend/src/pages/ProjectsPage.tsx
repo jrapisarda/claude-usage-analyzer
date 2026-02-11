@@ -3,7 +3,6 @@ import { Link } from 'react-router'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Search } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
-import { DataTable } from '@/components/composite/DataTable'
 import { ErrorState } from '@/components/composite/ErrorState'
 import { EmptyState } from '@/components/composite/EmptyState'
 import { ExportDropdown } from '@/components/composite/ExportDropdown'
@@ -140,10 +139,6 @@ export default function ProjectsPage() {
     setSort(columnId as SortField)
     setOrder(direction)
     setPage(1)
-  }, [])
-
-  const handlePageChange = useCallback((pageIndex: number) => {
-    setPage(pageIndex + 1) // DataTable uses 0-indexed, API uses 1-indexed
   }, [])
 
   if (error) return <ErrorState message={error.message} />

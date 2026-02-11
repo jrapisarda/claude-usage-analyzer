@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
+import { Link } from 'react-router'
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   PieChart, Pie, Cell, RadarChart, Radar, PolarGrid,
@@ -27,8 +28,8 @@ import {
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDateRange } from '@/hooks/useDateRange'
-import { useExplorer, useExplorerFilters } from '@/api/explorer'
-import type { ExplorerParams, FilterOption } from '@/api/explorer'
+import { useExplorer, useExplorerDrilldown, useExplorerFilters } from '@/api/explorer'
+import type { ExplorerParams, ExplorerDrilldownSession, FilterOption } from '@/api/explorer'
 import { TOOLTIP_STYLE, CHART_COLORS, fillZeros } from '@/lib/chartConfig'
 import { formatNumber, formatCurrency, formatDuration, cn } from '@/lib/utils'
 import { type ColumnDef } from '@tanstack/react-table'
@@ -71,6 +72,7 @@ const TOOL_DIMS = new Set(['date', 'model', 'project', 'branch', 'language', 'to
 const SESSION_DIMS = new Set(['date', 'project', 'branch', 'cc_version', 'is_agent'])
 const TURNS_METRICS_SET = new Set(['cost', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'ephemeral_5m_tokens', 'ephemeral_1h_tokens', 'thinking_chars', 'turns_count'])
 const TOOL_METRICS_SET = new Set(['loc_written', 'tool_calls_count', 'errors', 'lines_added', 'lines_deleted'])
+const DRILLDOWN_PAGE_SIZE = 20
 
 function getAllowedDims(metric: string | null): Set<string> {
   if (!metric) return new Set()
@@ -173,6 +175,8 @@ export default function ExplorerPage() {
   const [selModels, setSelModels] = useState<string[]>([])
   const [selBranches, setSelBranches] = useState<string[]>([])
   const [selLanguages, setSelLanguages] = useState<string[]>([])
+  const [selectedBucket, setSelectedBucket] = useState<{ group: string; split: string | null } | null>(null)
+  const [drillPage, setDrillPage] = useState(1)
 
   const allowedDims = getAllowedDims(metric)
 
@@ -194,10 +198,27 @@ export default function ExplorerPage() {
 
   const { data, isLoading, error } = useExplorer(params)
   const { data: filterData } = useExplorerFilters(dateRange.from, dateRange.to)
+  const { data: drilldownData, isLoading: drilldownLoading, error: drilldownError } = useExplorerDrilldown({
+    ...params,
+    group_value: selectedBucket?.group ?? null,
+    split_value: selectedBucket?.split ?? null,
+    page: drillPage,
+    limit: DRILLDOWN_PAGE_SIZE,
+  })
+
+  useEffect(() => {
+    setSelectedBucket(null)
+    setDrillPage(1)
+  }, [metric, effectiveGroupBy, effectiveSplitBy, dateRange.from, dateRange.to, selProjects, selModels, selBranches, selLanguages])
 
   const isTimeSeries = effectiveGroupBy === 'date'
   const hasSplit = !!effectiveSplitBy
   const metricLabel = METRICS.find(m => m.value === metric)?.label ?? metric ?? ''
+
+  const onSelectBucket = useCallback((group: string, split: string | null) => {
+    setSelectedBucket({ group, split })
+    setDrillPage(1)
+  }, [])
 
   // Pivot data for charts
   const { timeData, catData, pieData, treemapData, radarData, splitKeys, tableRows } = useMemo(() => {
@@ -286,8 +307,70 @@ export default function ExplorerPage() {
         <span className="font-mono text-right block">{formatValue(row.original.value, metric!)}</span>
       ),
     })
+    cols.push({
+      id: 'actions',
+      header: '',
+      cell: ({ row }) => (
+        <div className="text-right">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 text-xs"
+            onClick={() => onSelectBucket(row.original.group, row.original.split ?? null)}
+          >
+            Drill down
+          </Button>
+        </div>
+      ),
+    })
     return cols
-  }, [effectiveGroupBy, effectiveSplitBy, hasSplit, metricLabel, metric])
+  }, [effectiveGroupBy, effectiveSplitBy, hasSplit, metricLabel, metric, onSelectBucket])
+
+  const drilldownColumns: ColumnDef<ExplorerDrilldownSession, unknown>[] = useMemo(() => ([
+    {
+      accessorKey: 'session_id',
+      header: 'Session',
+      cell: ({ row }) => (
+        <Link to={`/sessions/${row.original.session_id}`} className="font-mono text-xs text-primary hover:underline">
+          {row.original.session_id}
+        </Link>
+      ),
+    },
+    {
+      accessorKey: 'project',
+      header: 'Project',
+      cell: ({ row }) => <span className="truncate block max-w-[220px]">{row.original.project}</span>,
+    },
+    {
+      accessorKey: 'bucket_value',
+      header: () => <span className="text-right block">{metricLabel}</span>,
+      cell: ({ row }) => (
+        <span className="font-mono text-right block">{formatValue(row.original.bucket_value, metric ?? 'turns_count')}</span>
+      ),
+    },
+    {
+      accessorKey: 'total_cost',
+      header: () => <span className="text-right block">Total Cost</span>,
+      cell: ({ row }) => (
+        <span className="font-mono text-right block">{formatCurrency(row.original.total_cost)}</span>
+      ),
+    },
+    {
+      accessorKey: 'turns',
+      header: () => <span className="text-right block">Turns</span>,
+      cell: ({ row }) => <span className="font-mono text-right block">{formatNumber(row.original.turns)}</span>,
+    },
+    {
+      accessorKey: 'tool_calls',
+      header: () => <span className="text-right block">Tools</span>,
+      cell: ({ row }) => <span className="font-mono text-right block">{formatNumber(row.original.tool_calls)}</span>,
+    },
+    {
+      accessorKey: 'errors',
+      header: () => <span className="text-right block">Errors</span>,
+      cell: ({ row }) => <span className="font-mono text-right block">{formatNumber(row.original.errors)}</span>,
+    },
+  ]), [metric, metricLabel])
 
   return (
     <PageLayout title="Data Explorer" subtitle="Query any metric by any dimension">
@@ -594,6 +677,71 @@ export default function ExplorerPage() {
                 data={tableRows.slice(0, 100)}
                 emptyMessage="No data"
               />
+            </CardContent>
+          </Card>
+
+          {/* Drill-down table */}
+          <Card className="mt-6">
+            <CardHeader className="pb-3 pt-4 px-4">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Session Drill-down</CardTitle>
+              <span className="text-xs text-muted-foreground">
+                {selectedBucket
+                  ? `${effectiveGroupBy}: ${selectedBucket.group}${hasSplit ? ` | ${effectiveSplitBy}: ${selectedBucket.split ?? 'N/A'}` : ''}`
+                  : 'Select a row in Raw Data and click Drill down'}
+              </span>
+            </CardHeader>
+            <CardContent className="px-4 pb-4 space-y-3">
+              {!selectedBucket ? (
+                <p className="text-sm text-muted-foreground">No bucket selected.</p>
+              ) : drilldownError ? (
+                <p className="text-sm text-destructive">{drilldownError.message}</p>
+              ) : (
+                <>
+                  <MetricCardGrid className="lg:grid-cols-3">
+                    <MetricCard title="Matching Sessions" value={formatNumber(drilldownData?.pagination.total_count ?? 0)} />
+                    <MetricCard
+                      title="Page"
+                      value={`${drilldownData?.pagination.page ?? drillPage} / ${Math.max(drilldownData?.pagination.total_pages ?? 1, 1)}`}
+                    />
+                    <MetricCard
+                      title="Bucket"
+                      value={selectedBucket.split
+                        ? `${selectedBucket.group} / ${selectedBucket.split}`
+                        : selectedBucket.group}
+                    />
+                  </MetricCardGrid>
+
+                  <DataTable
+                    columns={drilldownColumns}
+                    data={drilldownData?.sessions ?? []}
+                    isLoading={drilldownLoading}
+                    emptyMessage="No sessions for this bucket"
+                  />
+
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDrillPage(prev => Math.max(1, prev - 1))}
+                      disabled={drilldownLoading || drillPage <= 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDrillPage(prev => prev + 1)}
+                      disabled={
+                        drilldownLoading
+                        || !drilldownData
+                        || drillPage >= (drilldownData.pagination.total_pages || 1)
+                      }
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </>
