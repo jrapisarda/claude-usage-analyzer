@@ -2,7 +2,7 @@ import { NavLink } from 'react-router'
 import {
   LayoutDashboard, FolderKanban, List, DollarSign, Zap,
   BarChart3, FlaskConical, Radio, Settings, CalendarDays,
-  Brain, GitBranch, Telescope, PanelLeftClose, PanelLeft,
+  Brain, GitBranch, Telescope, PanelLeftClose, PanelLeft, ChartScatter,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -35,6 +35,7 @@ const navSections: NavSection[] = [
       { to: '/projects', icon: FolderKanban, label: 'Projects' },
       { to: '/sessions', icon: List, label: 'Sessions' },
       { to: '/explorer', icon: Telescope, label: 'Explorer' },
+      { to: '/visualizations', icon: ChartScatter, label: 'Visualization Lab' },
     ],
   },
   {

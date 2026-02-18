@@ -4,7 +4,7 @@ import { useSearch } from '@/api/search'
 import {
   LayoutDashboard, FolderKanban, List, DollarSign, Zap,
   BarChart3, FlaskConical, Radio, Settings, CalendarDays,
-  Brain, GitBranch, Telescope,
+  Brain, GitBranch, Telescope, ChartScatter,
 } from 'lucide-react'
 
 import {
@@ -32,6 +32,7 @@ const PAGES = [
   { label: 'Model Comparison', path: '/models', icon: Brain, keywords: ['claude', 'sonnet', 'opus'] },
   { label: 'Workflows', path: '/workflows', icon: GitBranch, keywords: ['agent', 'human', 'tools'] },
   { label: 'Explorer', path: '/explorer', icon: Telescope, keywords: ['browse', 'data'] },
+  { label: 'Visualization Lab', path: '/visualizations', icon: ChartScatter, keywords: ['scatter', 'x axis', 'y axis', 'tableau'] },
   { label: 'Experiments', path: '/experiments', icon: FlaskConical, keywords: ['tags', 'compare'] },
   { label: 'Live Monitor', path: '/live', icon: Radio, keywords: ['realtime', 'websocket'] },
   { label: 'Settings', path: '/settings', icon: Settings, keywords: ['pricing', 'config'] },

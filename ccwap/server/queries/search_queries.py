@@ -14,6 +14,7 @@ STATIC_PAGES = [
     {"label": "Activity Heatmap", "url": "/heatmap"},
     {"label": "Model Comparison", "url": "/models"},
     {"label": "Workflows", "url": "/workflows"},
+    {"label": "Visualization Lab", "url": "/visualizations"},
 ]
 
 

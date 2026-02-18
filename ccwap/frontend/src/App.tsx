@@ -24,6 +24,7 @@ const ModelComparisonPage = lazy(() => import('@/pages/ModelComparisonPage'))
 const WorkflowPage = lazy(() => import('@/pages/WorkflowPage'))
 const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'))
 const ExplorerPage = lazy(() => import('@/pages/ExplorerPage'))
+const VisualizationLabPage = lazy(() => import('@/pages/VisualizationLabPage'))
 const ReliabilityPage = lazy(() => import('@/pages/ReliabilityPage'))
 const BranchHealthPage = lazy(() => import('@/pages/BranchHealthPage'))
 const PromptEfficiencyPage = lazy(() => import('@/pages/PromptEfficiencyPage'))
@@ -81,6 +82,7 @@ function AppContent() {
               <Route path="/models" element={<ModelComparisonPage />} />
               <Route path="/workflows" element={<WorkflowPage />} />
               <Route path="/explorer" element={<ExplorerPage />} />
+              <Route path="/visualizations" element={<VisualizationLabPage />} />
               <Route path="/reliability" element={<ReliabilityPage />} />
               <Route path="/branch-health" element={<BranchHealthPage />} />
               <Route path="/prompt-efficiency" element={<PromptEfficiencyPage />} />
