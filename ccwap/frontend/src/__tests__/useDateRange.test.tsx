@@ -1,8 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import type { ReactNode } from 'react'
 import { useDateRange, presets } from '@/hooks/useDateRange'
+import { toDateStr } from '@/lib/utils'
+
+const STORAGE_KEY = 'ccwap:date-range'
 
 function wrapper({ children }: { children: ReactNode }) {
   return <MemoryRouter>{children}</MemoryRouter>
@@ -15,6 +18,10 @@ function wrapperWithParams(initialEntries: string[]) {
 }
 
 describe('useDateRange', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   it('defaults to last-30-days preset', () => {
     const { result } = renderHook(() => useDateRange(), { wrapper })
     expect(result.current.preset).toBe('last-30-days')
@@ -25,7 +32,7 @@ describe('useDateRange', () => {
     expect(result.current.dateRange.from).toBeTruthy()
     expect(result.current.dateRange.to).toBeTruthy()
     // last-30-days: "to" should be today
-    const today = new Date().toISOString().split('T')[0]
+    const today = toDateStr(new Date())
     expect(result.current.dateRange.to).toBe(today)
   })
 
@@ -44,6 +51,30 @@ describe('useDateRange', () => {
     expect(result.current.dateRange.to).toBe('2025-01-31')
   })
 
+  it('restores preset from localStorage when URL has no date params', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      preset: 'this-week',
+      from: '2025-01-20',
+      to: '2025-01-26',
+    }))
+
+    const { result } = renderHook(() => useDateRange(), { wrapper })
+    expect(result.current.preset).toBe('this-week')
+  })
+
+  it('restores custom range from localStorage when URL has no date params', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      preset: null,
+      from: '2025-06-01',
+      to: '2025-06-30',
+    }))
+
+    const { result } = renderHook(() => useDateRange(), { wrapper })
+    expect(result.current.preset).toBeNull()
+    expect(result.current.dateRange.from).toBe('2025-06-01')
+    expect(result.current.dateRange.to).toBe('2025-06-30')
+  })
+
   describe('setPreset', () => {
     it('changes the preset', () => {
       const { result } = renderHook(() => useDateRange(), { wrapper })
@@ -57,7 +88,7 @@ describe('useDateRange', () => {
 
     it('updates dateRange when preset changes to today', () => {
       const { result } = renderHook(() => useDateRange(), { wrapper })
-      const today = new Date().toISOString().split('T')[0]
+      const today = toDateStr(new Date())
 
       act(() => {
         result.current.setPreset('today')
@@ -138,14 +169,14 @@ describe('useDateRange', () => {
   })
 
   describe('presets constant', () => {
-    it('has 8 preset entries', () => {
-      expect(presets).toHaveLength(8)
+    it('has 10 preset entries', () => {
+      expect(presets).toHaveLength(10)
     })
 
     it('includes all expected presets', () => {
       const values = presets.map(p => p.value)
       expect(values).toEqual([
-        'today', 'yesterday', 'this-week', 'last-week',
+        'today', 'yesterday', 'last-7-days', 'last-14-days', 'this-week', 'last-week',
         'last-30-days', 'this-month', 'last-month', 'all-time',
       ])
     })

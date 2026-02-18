@@ -987,6 +987,31 @@ class TestCostQueries:
         assert summary["total_cost"] == 0.0
         assert summary["avg_daily_cost"] == 0.0
 
+    async def test_get_cost_summary_uses_live_turns_without_daily_summary(self, async_db):
+        """Today summary should come from turns even if daily_summaries has no today row."""
+        today = date.today().isoformat()
+        await async_db.execute("""
+            INSERT INTO turns (
+                session_id, uuid, entry_type, timestamp, model,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost
+            ) VALUES (
+                'sess-001', 'live-cost-today-001', 'assistant', datetime('now'),
+                'claude-sonnet-4-20250514', 10, 20, 0, 0, 1.23
+            )
+        """)
+        await async_db.commit()
+
+        summary = await cost_queries.get_cost_summary(
+            async_db, date_from=today, date_to=today
+        )
+        trend = await cost_queries.get_cost_trend(
+            async_db, date_from=today, date_to=today
+        )
+
+        assert summary["total_cost"] >= 1.23
+        assert summary["cost_today"] >= 1.23
+        assert len(trend) >= 1
+
     async def test_get_cost_by_model_all_models(self, async_db):
         models = await cost_queries.get_cost_by_model(
             async_db, date_from="2026-02-03", date_to="2026-02-05"
@@ -1279,6 +1304,45 @@ class TestProductivityQueries:
         assert summary["total_loc_written"] == 0
         assert summary["error_rate"] == 0
         assert summary["cost_per_kloc"] == 0
+
+    async def test_get_efficiency_summary_uses_live_tool_calls_without_daily_summary(self, async_db):
+        """Today productivity summary should use tool_calls/turns even with no daily_summaries row."""
+        today = date.today().isoformat()
+
+        await async_db.execute("""
+            INSERT INTO turns (
+                session_id, uuid, entry_type, timestamp, model,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost
+            ) VALUES (
+                'sess-001', 'live-prod-today-001', 'assistant', datetime('now'),
+                'claude-sonnet-4-20250514', 10, 100, 0, 0, 0.25
+            )
+        """)
+        cursor = await async_db.execute("SELECT id FROM turns WHERE uuid = 'live-prod-today-001'")
+        turn_id_row = await cursor.fetchone()
+        turn_id = turn_id_row[0]
+
+        await async_db.execute("""
+            INSERT INTO tool_calls (
+                turn_id, session_id, tool_use_id, tool_name, timestamp,
+                success, file_path, language, loc_written, lines_added, lines_deleted
+            ) VALUES (
+                ?, 'sess-001', 'live-tc-today-001', 'Write', datetime('now'),
+                1, '/tmp/live.py', 'python', 123, 130, 7
+            )
+        """, (turn_id,))
+        await async_db.commit()
+
+        summary = await productivity_queries.get_efficiency_summary(
+            async_db, date_from=today, date_to=today
+        )
+        trend = await productivity_queries.get_loc_trend(
+            async_db, date_from=today, date_to=today
+        )
+
+        assert summary["total_loc_written"] >= 123
+        assert summary["total_loc_delivered"] >= 123
+        assert len(trend) >= 1
 
     async def test_get_loc_trend(self, async_db):
         trend = await productivity_queries.get_loc_trend(

@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, List
 
 import aiosqlite
 
-from ccwap.server.queries.date_helpers import build_date_filter, build_summary_filter
+from ccwap.server.queries.date_helpers import build_date_filter
 
 
 async def get_efficiency_summary(
@@ -13,26 +13,44 @@ async def get_efficiency_summary(
     date_to: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Efficiency summary cards. Two-query pattern."""
-    params: list = []
-    filters = build_summary_filter(date_from, date_to, params)
+    # Query 1: turns-side aggregates (sessions, cost, tokens)
+    turn_params: list = []
+    turn_filters = build_date_filter("timestamp", date_from, date_to, turn_params)
 
     cursor = await db.execute(f"""
         SELECT
-            SUM(loc_written), SUM(loc_delivered), SUM(sessions),
-            SUM(cost), SUM(tool_calls), SUM(errors),
-            SUM(output_tokens)
-        FROM daily_summaries
-        WHERE 1=1 {filters}
-    """, params)
+            COUNT(DISTINCT session_id) as sessions,
+            SUM(cost) as cost,
+            SUM(output_tokens) as output_tokens
+        FROM turns
+        WHERE timestamp IS NOT NULL {turn_filters}
+    """, turn_params)
     row = await cursor.fetchone()
+    sessions = row[0] or 0
+    cost = row[1] or 0.0
+    output_tokens = row[2] or 0
 
+    # Query 2: tool_calls-side aggregates (LOC + errors)
+    tc_params: list = []
+    tc_filters = build_date_filter("timestamp", date_from, date_to, tc_params)
+
+    cursor = await db.execute(f"""
+        SELECT
+            SUM(loc_written) as loc_written,
+            SUM(lines_added) as lines_added,
+            SUM(lines_deleted) as lines_deleted,
+            COUNT(*) as tool_calls,
+            SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as errors
+        FROM tool_calls
+        WHERE timestamp IS NOT NULL {tc_filters}
+    """, tc_params)
+    row = await cursor.fetchone()
     loc_written = row[0] or 0
-    loc_delivered = row[1] or 0
-    sessions = row[2] or 0
-    cost = row[3] or 0.0
-    tool_calls = row[4] or 0
-    errors = row[5] or 0
-    output_tokens = row[6] or 0
+    lines_added = row[1] or 0
+    lines_deleted = row[2] or 0
+    loc_delivered = lines_added - lines_deleted
+    tool_calls = row[3] or 0
+    errors = row[4] or 0
 
     return {
         "total_loc_written": loc_written,
@@ -49,15 +67,20 @@ async def get_loc_trend(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """LOC trend from daily_summaries."""
+    """Daily LOC trend from live tool_calls."""
     params: list = []
-    filters = build_summary_filter(date_from, date_to, params)
+    filters = build_date_filter("timestamp", date_from, date_to, params)
 
     cursor = await db.execute(f"""
-        SELECT date, loc_written, loc_delivered, lines_added, lines_deleted
-        FROM daily_summaries
-        WHERE 1=1 {filters}
-        ORDER BY date ASC
+        SELECT
+            date(timestamp, 'localtime') as day,
+            SUM(loc_written) as loc_written,
+            SUM(lines_added) as lines_added,
+            SUM(lines_deleted) as lines_deleted
+        FROM tool_calls
+        WHERE timestamp IS NOT NULL {filters}
+        GROUP BY day
+        ORDER BY day ASC
     """, params)
     rows = await cursor.fetchall()
 
@@ -65,9 +88,9 @@ async def get_loc_trend(
         {
             "date": row[0],
             "loc_written": row[1] or 0,
-            "loc_delivered": row[2] or 0,
-            "lines_added": row[3] or 0,
-            "lines_deleted": row[4] or 0,
+            "loc_delivered": (row[2] or 0) - (row[3] or 0),
+            "lines_added": row[2] or 0,
+            "lines_deleted": row[3] or 0,
         }
         for row in rows
     ]
@@ -200,23 +223,44 @@ async def get_efficiency_trend(
 ) -> List[Dict[str, Any]]:
     """Daily cost per kLOC.
     Returns: date, cost_per_kloc."""
-    params: list = []
-    filters = build_summary_filter(date_from, date_to, params)
-
+    cost_params: list = []
+    cost_filters = build_date_filter("timestamp", date_from, date_to, cost_params)
     cursor = await db.execute(f"""
-        SELECT date, cost, loc_written
-        FROM daily_summaries
-        WHERE 1=1 {filters}
-        ORDER BY date ASC
-    """, params)
-    rows = await cursor.fetchall()
+        SELECT date(timestamp, 'localtime') as day, SUM(cost) as cost
+        FROM turns
+        WHERE timestamp IS NOT NULL {cost_filters}
+        GROUP BY day
+    """, cost_params)
+    cost_rows = await cursor.fetchall()
+
+    loc_params: list = []
+    loc_filters = build_date_filter("timestamp", date_from, date_to, loc_params)
+    cursor = await db.execute(f"""
+        SELECT date(timestamp, 'localtime') as day, SUM(loc_written) as loc_written
+        FROM tool_calls
+        WHERE timestamp IS NOT NULL {loc_filters}
+        GROUP BY day
+    """, loc_params)
+    loc_rows = await cursor.fetchall()
+
+    by_day: Dict[str, Dict[str, float]] = {}
+    for day, cost in cost_rows:
+        by_day[day] = {"cost": cost or 0.0, "loc_written": 0.0}
+    for day, loc_written in loc_rows:
+        if day not in by_day:
+            by_day[day] = {"cost": 0.0, "loc_written": 0.0}
+        by_day[day]["loc_written"] = float(loc_written or 0.0)
 
     return [
         {
-            "date": row[0],
-            "cost_per_kloc": (row[1] or 0) / ((row[2] or 0) / 1000) if (row[2] or 0) > 0 else 0.0,
+            "date": day,
+            "cost_per_kloc": (
+                by_day[day]["cost"] / (by_day[day]["loc_written"] / 1000.0)
+                if by_day[day]["loc_written"] > 0
+                else 0.0
+            ),
         }
-        for row in rows
+        for day in sorted(by_day.keys())
     ]
 
 

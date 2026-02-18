@@ -22,12 +22,20 @@ interface CustomPreset {
   to: string
 }
 
+const EMPTY_PRICING_ENTRY: PricingEntry = { input: 0, output: 0, cache_read: 0, cache_write: 0 }
+
 function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
   const updatePricing = useUpdatePricing()
   const [editModel, setEditModel] = useState<string | null>(null)
-  const [editValues, setEditValues] = useState<PricingEntry>({ input: 0, output: 0, cache_read: 0, cache_write: 0 })
+  const [editValues, setEditValues] = useState<PricingEntry>({ ...EMPTY_PRICING_ENTRY })
+  const [isAddingModel, setIsAddingModel] = useState(false)
+  const [newModel, setNewModel] = useState('')
+  const [newValues, setNewValues] = useState<PricingEntry>({ ...EMPTY_PRICING_ENTRY })
+  const [addError, setAddError] = useState<string | null>(null)
 
   const startEdit = useCallback((model: string, entry: PricingEntry) => {
+    setIsAddingModel(false)
+    setAddError(null)
     setEditModel(model)
     setEditValues({ ...entry })
   }, [])
@@ -41,8 +49,60 @@ function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
 
   const models = Object.entries(pricing).sort((a, b) => a[0].localeCompare(b[0]))
 
+  const startAddModel = useCallback(() => {
+    setEditModel(null)
+    setAddError(null)
+    setNewModel('')
+    setNewValues({ ...EMPTY_PRICING_ENTRY })
+    setIsAddingModel(true)
+  }, [])
+
+  const cancelAddModel = useCallback(() => {
+    setAddError(null)
+    setNewModel('')
+    setNewValues({ ...EMPTY_PRICING_ENTRY })
+    setIsAddingModel(false)
+  }, [])
+
+  const saveNewModel = useCallback(() => {
+    const model = newModel.trim()
+    if (!model) {
+      setAddError('Model name is required.')
+      return
+    }
+
+    const hasDuplicate = models.some(([existingModel]) => existingModel.toLowerCase() === model.toLowerCase())
+    if (hasDuplicate) {
+      setAddError('Model already exists. Use Edit.')
+      return
+    }
+
+    setAddError(null)
+    updatePricing.mutate({ model, pricing: newValues }, {
+      onSuccess: () => cancelAddModel(),
+    })
+  }, [cancelAddModel, models, newModel, newValues, updatePricing])
+
   return (
     <div className="rounded-md border border-border overflow-hidden">
+      <div className="flex justify-end gap-2 border-b border-border p-3">
+        {isAddingModel ? (
+          <>
+            <Button variant="ghost" size="sm" onClick={cancelAddModel} disabled={updatePricing.isPending}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={saveNewModel} disabled={updatePricing.isPending || !newModel.trim()}>
+              <Save className="mr-1.5 h-4 w-4" />
+              Save Model
+            </Button>
+          </>
+        ) : (
+          <Button variant="outline" size="sm" onClick={startAddModel} disabled={updatePricing.isPending}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add Model
+          </Button>
+        )}
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
@@ -55,6 +115,47 @@ function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
           </TableRow>
         </TableHeader>
         <TableBody>
+          {isAddingModel && (
+            <TableRow>
+              <TableCell>
+                <Input
+                  type="text"
+                  value={newModel}
+                  onChange={e => setNewModel(e.target.value)}
+                  placeholder="claude-model-name"
+                  className="font-mono text-xs"
+                />
+              </TableCell>
+              {(['input', 'output', 'cache_read', 'cache_write'] as const).map(field => (
+                <TableCell key={`new-${field}`}>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={newValues[field]}
+                    onChange={e => setNewValues(prev => ({ ...prev, [field]: parseFloat(e.target.value) || 0 }))}
+                    className="w-full text-right font-mono text-sm"
+                  />
+                </TableCell>
+              ))}
+              <TableCell className="text-right">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={saveNewModel}
+                  disabled={updatePricing.isPending || !newModel.trim()}
+                >
+                  <Save className="h-4 w-4" />
+                </Button>
+              </TableCell>
+            </TableRow>
+          )}
+          {isAddingModel && addError && (
+            <TableRow>
+              <TableCell colSpan={6} className="text-xs text-destructive">
+                {addError}
+              </TableCell>
+            </TableRow>
+          )}
           {models.map(([model, entry]) => (
             <TableRow key={model}>
               <TableCell className="font-mono text-xs">{model}</TableCell>

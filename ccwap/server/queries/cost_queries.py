@@ -5,7 +5,46 @@ from typing import Optional, Dict, Any, List
 
 import aiosqlite
 
-from ccwap.server.queries.date_helpers import local_today, build_date_filter, build_summary_filter
+from ccwap.server.queries.date_helpers import local_today, build_date_filter
+
+
+async def _get_daily_cost_rows_from_turns(
+    db: aiosqlite.Connection,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> List[Any]:
+    """Return daily cost rows from live turns data for accurate near-real-time metrics."""
+    params: list = []
+    filters = build_date_filter("timestamp", date_from, date_to, params)
+
+    cursor = await db.execute(f"""
+        SELECT
+            date(timestamp, 'localtime') as day,
+            SUM(cost) as cost
+        FROM turns
+        WHERE timestamp IS NOT NULL {filters}
+        GROUP BY day
+        ORDER BY day ASC
+    """, params)
+    return await cursor.fetchall()
+
+
+async def _get_cost_sum_from_turns(
+    db: aiosqlite.Connection,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> float:
+    """Return summed cost from live turns data for a date range."""
+    params: list = []
+    filters = build_date_filter("timestamp", date_from, date_to, params)
+
+    cursor = await db.execute(f"""
+        SELECT SUM(cost)
+        FROM turns
+        WHERE timestamp IS NOT NULL {filters}
+    """, params)
+    row = await cursor.fetchone()
+    return row[0] or 0.0
 
 
 async def get_cost_summary(
@@ -19,40 +58,16 @@ async def get_cost_summary(
     week_start = (today - timedelta(days=today.weekday())).isoformat()
     month_start = today.replace(day=1).isoformat()
 
-    # Overall for the date range
-    params: list = []
-    filters = build_summary_filter(date_from, date_to, params)
+    # Date-range total/average from live daily aggregates.
+    daily_rows = await _get_daily_cost_rows_from_turns(db, date_from, date_to)
+    total_cost = sum((row[1] or 0.0) for row in daily_rows)
+    day_count = len(daily_rows)
+    avg_daily = (total_cost / day_count) if day_count > 0 else 0.0
 
-    cursor = await db.execute(f"""
-        SELECT SUM(cost), COUNT(*), AVG(cost)
-        FROM daily_summaries
-        WHERE 1=1 {filters}
-    """, params)
-    row = await cursor.fetchone()
-    total_cost = row[0] or 0.0
-    day_count = row[1] or 0
-    avg_daily = row[2] or 0.0
-
-    # Today
-    cursor = await db.execute("SELECT cost FROM daily_summaries WHERE date = ?", (today_str,))
-    row = await cursor.fetchone()
-    cost_today = row[0] if row else 0.0
-
-    # This week
-    cursor = await db.execute(
-        "SELECT SUM(cost) FROM daily_summaries WHERE date >= ? AND date <= ?",
-        (week_start, today_str)
-    )
-    row = await cursor.fetchone()
-    cost_this_week = row[0] or 0.0
-
-    # This month
-    cursor = await db.execute(
-        "SELECT SUM(cost) FROM daily_summaries WHERE date >= ? AND date <= ?",
-        (month_start, today_str)
-    )
-    row = await cursor.fetchone()
-    cost_this_month = row[0] or 0.0
+    # Rolling windows from live turns to avoid stale daily_summaries.
+    cost_today = await _get_cost_sum_from_turns(db, today_str, today_str)
+    cost_this_week = await _get_cost_sum_from_turns(db, week_start, today_str)
+    cost_this_month = await _get_cost_sum_from_turns(db, month_start, today_str)
 
     # Projected monthly
     days_elapsed = today.day
@@ -159,16 +174,7 @@ async def get_cost_trend(
     date_to: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Daily cost trend with cumulative total."""
-    params: list = []
-    filters = build_summary_filter(date_from, date_to, params)
-
-    cursor = await db.execute(f"""
-        SELECT date, cost
-        FROM daily_summaries
-        WHERE 1=1 {filters}
-        ORDER BY date ASC
-    """, params)
-    rows = await cursor.fetchall()
+    rows = await _get_daily_cost_rows_from_turns(db, date_from, date_to)
 
     cumulative = 0.0
     result = []
@@ -266,16 +272,7 @@ async def get_cost_anomalies(
 ) -> List[Dict[str, Any]]:
     """Daily cost with anomaly detection via IQR method.
     Returns list of dicts with: date, cost, is_anomaly, threshold."""
-    params: list = []
-    filters = build_summary_filter(date_from, date_to, params)
-
-    cursor = await db.execute(f"""
-        SELECT date, cost
-        FROM daily_summaries
-        WHERE 1=1 {filters}
-        ORDER BY date ASC
-    """, params)
-    rows = await cursor.fetchall()
+    rows = await _get_daily_cost_rows_from_turns(db, date_from, date_to)
 
     if not rows:
         return []
@@ -309,16 +306,7 @@ async def get_cumulative_cost(
 ) -> List[Dict[str, Any]]:
     """Running sum of daily cost.
     Returns list of dicts with: date, daily_cost, cumulative."""
-    params: list = []
-    filters = build_summary_filter(date_from, date_to, params)
-
-    cursor = await db.execute(f"""
-        SELECT date, cost
-        FROM daily_summaries
-        WHERE 1=1 {filters}
-        ORDER BY date ASC
-    """, params)
-    rows = await cursor.fetchall()
+    rows = await _get_daily_cost_rows_from_turns(db, date_from, date_to)
 
     cumulative = 0.0
     result = []
@@ -397,13 +385,7 @@ async def get_spend_forecast(
     today_str = local_today()
     start = (today - timedelta(days=13)).isoformat()
 
-    cursor = await db.execute("""
-        SELECT date, cost
-        FROM daily_summaries
-        WHERE date >= ? AND date <= ?
-        ORDER BY date ASC
-    """, (start, today_str))
-    rows = await cursor.fetchall()
+    rows = await _get_daily_cost_rows_from_turns(db, start, today_str)
 
     if not rows:
         return {

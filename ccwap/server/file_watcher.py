@@ -56,7 +56,7 @@ def _query_latest_session(config: Optional[Dict[str, Any]]) -> Optional[Dict[str
 
 def _query_daily_cost(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """
-    Query today's cost total and session count from daily_summaries.
+    Query today's cost total and session count from live turns.
 
     Uses its own synchronous connection (safe for asyncio.to_thread).
     Returns None if no data or on error.
@@ -72,17 +72,18 @@ def _query_daily_cost(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
         try:
             today = date.today().isoformat()
             cursor = conn.execute("""
-                SELECT cost, sessions
-                FROM daily_summaries
-                WHERE date = ?
+                SELECT
+                    COALESCE(SUM(cost), 0.0) as cost_today,
+                    COUNT(DISTINCT session_id) as sessions_today
+                FROM turns
+                WHERE timestamp IS NOT NULL
+                  AND date(timestamp, 'localtime') = ?
             """, (today,))
             row = cursor.fetchone()
-            if row:
-                return {
-                    "cost_today": row["cost"] or 0.0,
-                    "sessions_today": row["sessions"] or 0,
-                }
-            return {"cost_today": 0.0, "sessions_today": 0}
+            return {
+                "cost_today": row["cost_today"] or 0.0,
+                "sessions_today": row["sessions_today"] or 0,
+            }
         finally:
             conn.close()
     except Exception:

@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useEffect } from 'react'
 import { useSearchParams } from 'react-router'
 import { toDateStr } from '@/lib/utils'
 
@@ -8,6 +8,61 @@ export interface DateRange {
 }
 
 export type Preset = 'today' | 'yesterday' | 'last-7-days' | 'last-14-days' | 'this-week' | 'last-week' | 'last-30-days' | 'this-month' | 'last-month' | 'all-time'
+
+interface StoredDateRangeState {
+  preset: Preset | null
+  from: string | null
+  to: string | null
+}
+
+const DATE_RANGE_STORAGE_KEY = 'ccwap:date-range'
+
+const PRESET_VALUES: Preset[] = [
+  'today',
+  'yesterday',
+  'last-7-days',
+  'last-14-days',
+  'this-week',
+  'last-week',
+  'last-30-days',
+  'this-month',
+  'last-month',
+  'all-time',
+]
+
+const PRESET_SET = new Set<Preset>(PRESET_VALUES)
+
+function isPreset(value: string | null): value is Preset {
+  return value !== null && PRESET_SET.has(value as Preset)
+}
+
+function readStoredDateRangeState(): StoredDateRangeState | null {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const raw = window.localStorage.getItem(DATE_RANGE_STORAGE_KEY)
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw) as Partial<StoredDateRangeState>
+    const parsedPreset = parsed.preset ?? null
+    const preset: Preset | null = isPreset(parsedPreset) ? parsedPreset : null
+    const from = typeof parsed.from === 'string' ? parsed.from : null
+    const to = typeof parsed.to === 'string' ? parsed.to : null
+    return { preset, from, to }
+  } catch {
+    return null
+  }
+}
+
+function persistDateRangeState(state: StoredDateRangeState) {
+  if (typeof window === 'undefined') return
+
+  try {
+    window.localStorage.setItem(DATE_RANGE_STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    // Ignore write errors (private mode, quota exceeded, etc.)
+  }
+}
 
 function getPresetRange(preset: Preset): DateRange {
   const now = new Date()
@@ -58,17 +113,36 @@ function getPresetRange(preset: Preset): DateRange {
 
 export function useDateRange() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const preset: Preset | null = (searchParams.get('preset') as Preset | null) || (
-    !searchParams.get('from') && !searchParams.get('to') ? 'last-30-days' : null
-  )
+  const presetParam = searchParams.get('preset')
+  const urlPreset: Preset | null = isPreset(presetParam) ? presetParam : null
+  const from = searchParams.get('from')
+  const to = searchParams.get('to')
+  const hasUrlDateRange = from !== null || to !== null
+  const hasUrlDateState = urlPreset !== null || hasUrlDateRange
+
+  const storedState = useMemo(() => {
+    if (hasUrlDateState) return null
+    return readStoredDateRangeState()
+  }, [hasUrlDateState, searchParams])
+
+  const preset: Preset | null = useMemo(() => {
+    if (urlPreset) return urlPreset
+    if (hasUrlDateRange) return null
+    if (storedState?.preset) return storedState.preset
+    return !storedState?.from && !storedState?.to ? 'last-30-days' : null
+  }, [urlPreset, hasUrlDateRange, storedState])
 
   const dateRange: DateRange = useMemo(() => {
-    const from = searchParams.get('from')
-    const to = searchParams.get('to')
     if (from || to) return { from, to }
-    if (preset) return getPresetRange(preset)
+    if (urlPreset) return getPresetRange(urlPreset)
+    if (storedState?.from || storedState?.to) return { from: storedState.from, to: storedState.to }
+    if (storedState?.preset) return getPresetRange(storedState.preset)
     return getPresetRange('last-30-days')
-  }, [searchParams, preset])
+  }, [from, to, urlPreset, storedState])
+
+  useEffect(() => {
+    persistDateRangeState({ preset, from: dateRange.from, to: dateRange.to })
+  }, [preset, dateRange.from, dateRange.to])
 
   const setDateRange = useCallback((range: DateRange) => {
     setSearchParams(prev => {

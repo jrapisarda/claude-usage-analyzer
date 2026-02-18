@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from ccwap.config.loader import load_config, get_database_path, get_claude_projects_path
 from ccwap.models.schema import get_connection, ensure_database
 from ccwap.etl import discover_jsonl_files, process_file
+from ccwap.etl.loader import materialize_daily_summaries
 from ccwap.etl.incremental import update_file_state, clear_file_state
 from ccwap.utils.progress import print_status
 
@@ -87,9 +88,6 @@ class FileWatcher:
             if previous_state is None or current_state != previous_state:
                 changed.append(file_path)
                 self._file_states[path_str] = current_state
-            elif self._is_recent_file(file_path):
-                # Always include recent files in case they're being actively written
-                changed.append(file_path)
 
         # Track removed files (for cleanup if needed)
         removed = set(self._file_states.keys()) - current_paths
@@ -161,6 +159,12 @@ class FileWatcher:
                 conn.rollback()
                 continue
 
+        # Keep summary table aligned with newly ingested turns/tool_calls.
+        # Without this, cards/charts that read daily_summaries can show stale zeros.
+        if stats['files_processed'] > 0:
+            stats['daily_summaries_updated'] = materialize_daily_summaries(conn)
+            conn.commit()
+
         return stats
 
     def run_once(self) -> Dict[str, Any]:
@@ -188,6 +192,36 @@ class FileWatcher:
                 self._last_etl_stats = stats
                 return stats
             else:
+                # Self-heal stale summary table: if today's turns exist but today's
+                # summary row is missing, refresh that day even without file changes.
+                today = datetime.now().date().isoformat()
+                cursor = conn.execute(
+                    "SELECT 1 FROM daily_summaries WHERE date = ? LIMIT 1",
+                    (today,)
+                )
+                has_today_summary = cursor.fetchone() is not None
+
+                if not has_today_summary:
+                    cursor = conn.execute("""
+                        SELECT 1
+                        FROM turns
+                        WHERE timestamp IS NOT NULL
+                          AND date(timestamp, 'localtime') = ?
+                        LIMIT 1
+                    """, (today,))
+                    has_today_turns = cursor.fetchone() is not None
+
+                    if has_today_turns:
+                        days_updated = materialize_daily_summaries(conn, affected_dates=[today])
+                        conn.commit()
+                        stats = {
+                            'files_changed': 0,
+                            'daily_summaries_updated': days_updated,
+                            'message': 'No file changes; refreshed today summary',
+                        }
+                        self._last_etl_stats = stats
+                        return stats
+
                 return {'files_changed': 0, 'message': 'No changes detected'}
         finally:
             conn.close()
