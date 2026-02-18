@@ -73,7 +73,9 @@ def upsert_turns_batch(
             turn.usage.cache_read_tokens,
             turn.usage.cache_write_tokens,
             turn.model,
-            config
+            config,
+            turn.usage.ephemeral_5m_tokens,
+            turn.usage.ephemeral_1h_tokens,
         )
         turn.cost = cost
         turn.pricing_version = pricing_version

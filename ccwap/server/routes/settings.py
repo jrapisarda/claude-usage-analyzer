@@ -44,11 +44,15 @@ async def get_settings(
     for model, prices in pricing_table.items():
         if model == "default":
             continue
+        cache_write_5m = prices.get("cache_write_5m", prices.get("cache_write", 0))
+        cache_write_1h = prices.get("cache_write_1h", cache_write_5m * 1.6)
         pricing[model] = PricingEntry(
             input=prices.get("input", 0),
             output=prices.get("output", 0),
             cache_read=prices.get("cache_read", 0),
-            cache_write=prices.get("cache_write", 0),
+            cache_write_5m=cache_write_5m,
+            cache_write_1h=cache_write_1h,
+            cache_write=cache_write_5m,
         )
 
     db_stats_raw = await get_db_stats(db)
@@ -70,11 +74,16 @@ async def update_pricing(
     """Update pricing for a model."""
     config = get_config(request)
     pricing = config.get("pricing", {})
+    cache_write_5m = request_body.pricing.cache_write_5m
+    cache_write_1h = request_body.pricing.cache_write_1h
     pricing[request_body.model] = {
         "input": request_body.pricing.input,
         "output": request_body.pricing.output,
         "cache_read": request_body.pricing.cache_read,
-        "cache_write": request_body.pricing.cache_write,
+        "cache_write_5m": cache_write_5m,
+        "cache_write_1h": cache_write_1h,
+        # Preserve legacy key for compatibility with older tooling.
+        "cache_write": cache_write_5m,
     }
 
     from ccwap.config.loader import save_config

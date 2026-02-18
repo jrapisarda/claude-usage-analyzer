@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import copy
 
+from ccwap.cost.pricing import normalize_pricing_entry
+
 # Default configuration with all pricing tiers
 DEFAULT_CONFIG: Dict[str, Any] = {
     "database_path": "~/.ccwap/analytics.db",
@@ -21,50 +23,128 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "input": 5.00,
             "output": 25.00,
             "cache_read": 0.50,
-            "cache_write": 6.25
+            "cache_write_5m": 6.25,
+            "cache_write_1h": 10.00,
+        },
+        "claude-opus-4-5": {
+            "input": 5.00,
+            "output": 25.00,
+            "cache_read": 0.50,
+            "cache_write_5m": 6.25,
+            "cache_write_1h": 10.00,
         },
         "claude-opus-4-5-20251101": {
+            "input": 5.00,
+            "output": 25.00,
+            "cache_read": 0.50,
+            "cache_write_5m": 6.25,
+            "cache_write_1h": 10.00,
+        },
+        "claude-opus-4-1": {
             "input": 15.00,
             "output": 75.00,
             "cache_read": 1.50,
-            "cache_write": 18.75
+            "cache_write_5m": 18.75,
+            "cache_write_1h": 30.00,
+        },
+        "claude-opus-4": {
+            "input": 15.00,
+            "output": 75.00,
+            "cache_read": 1.50,
+            "cache_write_5m": 18.75,
+            "cache_write_1h": 30.00,
+        },
+        "claude-opus-3": {
+            "input": 15.00,
+            "output": 75.00,
+            "cache_read": 1.50,
+            "cache_write_5m": 18.75,
+            "cache_write_1h": 30.00,
+        },
+        "claude-sonnet-4-6": {
+            "input": 3.00,
+            "output": 15.00,
+            "cache_read": 0.30,
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
+        },
+        "claude-sonnet-4-5": {
+            "input": 3.00,
+            "output": 15.00,
+            "cache_read": 0.30,
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
         },
         "claude-sonnet-4-5-20250929": {
             "input": 3.00,
             "output": 15.00,
             "cache_read": 0.30,
-            "cache_write": 3.75
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
         },
         "claude-sonnet-4-20250514": {
             "input": 3.00,
             "output": 15.00,
             "cache_read": 0.30,
-            "cache_write": 3.75
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
+        },
+        "claude-sonnet-3-7": {
+            "input": 3.00,
+            "output": 15.00,
+            "cache_read": 0.30,
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
+        },
+        "claude-3-7-sonnet": {
+            "input": 3.00,
+            "output": 15.00,
+            "cache_read": 0.30,
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
         },
         "claude-3-5-sonnet-20241022": {
             "input": 3.00,
             "output": 15.00,
             "cache_read": 0.30,
-            "cache_write": 3.75
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
         },
         "claude-haiku-3-5-20241022": {
             "input": 0.80,
             "output": 4.00,
             "cache_read": 0.08,
-            "cache_write": 1.00
+            "cache_write_5m": 1.00,
+            "cache_write_1h": 1.60,
+        },
+        "claude-haiku-4-5": {
+            "input": 1.00,
+            "output": 5.00,
+            "cache_read": 0.10,
+            "cache_write_5m": 1.25,
+            "cache_write_1h": 2.00,
         },
         "claude-haiku-4-5-20251001": {
             "input": 1.00,
             "output": 5.00,
             "cache_read": 0.10,
-            "cache_write": 1.25
+            "cache_write_5m": 1.25,
+            "cache_write_1h": 2.00,
+        },
+        "claude-haiku-3": {
+            "input": 0.25,
+            "output": 1.25,
+            "cache_read": 0.03,
+            "cache_write_5m": 0.30,
+            "cache_write_1h": 0.50,
         },
         # Default pricing for unknown models (uses Sonnet pricing)
         "default": {
             "input": 3.00,
             "output": 15.00,
             "cache_read": 0.30,
-            "cache_write": 3.75
+            "cache_write_5m": 3.75,
+            "cache_write_1h": 6.00,
         }
     },
 
@@ -169,13 +249,13 @@ def get_model_pricing(model: Optional[str], config: Dict[str, Any]) -> Dict[str,
     Attempts exact match first, then prefix matching, finally falls back to default.
     """
     if not model:
-        return config['pricing']['default']
+        return normalize_pricing_entry(config['pricing']['default'])
 
     pricing = config['pricing']
 
     # Exact match
     if model in pricing:
-        return pricing[model]
+        return normalize_pricing_entry(pricing[model])
 
     # Prefix match for model families
     # e.g., "claude-sonnet-4-20250514-extra" should match "claude-sonnet-4-20250514"
@@ -184,15 +264,15 @@ def get_model_pricing(model: Optional[str], config: Dict[str, Any]) -> Dict[str,
             continue
         # Check if the known model is a prefix of the actual model
         if model.startswith(known_model):
-            return pricing[known_model]
+            return normalize_pricing_entry(pricing[known_model])
         # Or if they share a common base (before the date suffix)
         base = known_model.rsplit('-', 1)[0]
         if model.startswith(base):
-            return pricing[known_model]
+            return normalize_pricing_entry(pricing[known_model])
 
     # Fallback to default with warning
     print(f"Warning: Unknown model '{model}', using default pricing")
-    return pricing['default']
+    return normalize_pricing_entry(pricing['default'])
 
 
 def check_claude_settings() -> Optional[str]:

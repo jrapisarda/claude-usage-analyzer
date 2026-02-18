@@ -6,7 +6,9 @@ export interface PricingEntry {
   input: number
   output: number
   cache_read: number
-  cache_write: number
+  cache_write_5m: number
+  cache_write_1h: number
+  cache_write?: number
 }
 
 export interface EtlStatus {

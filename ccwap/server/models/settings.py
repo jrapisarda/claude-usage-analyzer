@@ -9,7 +9,10 @@ class PricingEntry(BaseModel):
     input: float
     output: float
     cache_read: float
-    cache_write: float
+    cache_write_5m: float
+    cache_write_1h: float
+    # Legacy alias preserved for backward compatibility.
+    cache_write: float = 0.0
 
 
 class PricingUpdateRequest(BaseModel):

@@ -2,11 +2,11 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 import aiosqlite
 
-from ccwap.server.dependencies import get_db
+from ccwap.server.dependencies import get_db, get_config
 from ccwap.server.models.cost import CostAnalysisResponse
 from ccwap.server.queries.cost_queries import (
     get_cost_summary,
@@ -26,17 +26,19 @@ router = APIRouter(prefix="/api", tags=["cost"])
 
 @router.get("/cost", response_model=CostAnalysisResponse)
 async def cost_analysis(
+    request: Request,
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """Get complete cost analysis data."""
+    config = get_config(request)
     summary = await get_cost_summary(db, date_from, date_to)
-    by_token_type = await get_cost_by_token_type(db, date_from, date_to)
+    by_token_type = await get_cost_by_token_type(db, date_from, date_to, config)
     by_model = await get_cost_by_model(db, date_from, date_to)
     trend = await get_cost_trend(db, date_from, date_to)
     by_project = await get_cost_by_project(db, date_from, date_to)
-    cache_savings = await get_cache_savings(db, date_from, date_to)
+    cache_savings = await get_cache_savings(db, date_from, date_to, config)
     forecast = await get_spend_forecast(db)
 
     return CostAnalysisResponse(
@@ -74,11 +76,13 @@ async def cost_cumulative(
 
 @router.get("/cost/cache-simulation")
 async def cost_cache_simulation(
+    request: Request,
     target_hit_rate: float = Query(0.5),
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """What-if simulation for cache hit rate improvement."""
-    data = await get_cache_simulation(db, target_hit_rate, date_from, date_to)
+    config = get_config(request)
+    data = await get_cache_simulation(db, target_hit_rate, date_from, date_to, config)
     return data

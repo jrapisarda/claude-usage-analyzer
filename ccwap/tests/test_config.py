@@ -47,7 +47,7 @@ class TestConfigLoading(unittest.TestCase):
 
     def test_pricing_has_all_token_types(self):
         """Verify each model pricing has all token types."""
-        required_types = ['input', 'output', 'cache_read', 'cache_write']
+        required_types = ['input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h']
 
         for model, pricing in DEFAULT_CONFIG['pricing'].items():
             for token_type in required_types:
@@ -108,10 +108,12 @@ class TestModelPricing(unittest.TestCase):
         config = load_config()
         pricing = get_model_pricing('claude-opus-4-5-20251101', config)
 
-        self.assertEqual(pricing['input'], 15.00)
-        self.assertEqual(pricing['output'], 75.00)
-        self.assertEqual(pricing['cache_read'], 1.50)
-        self.assertEqual(pricing['cache_write'], 18.75)
+        self.assertEqual(pricing['input'], 5.00)
+        self.assertEqual(pricing['output'], 25.00)
+        self.assertEqual(pricing['cache_read'], 0.50)
+        self.assertEqual(pricing['cache_write_5m'], 6.25)
+        self.assertEqual(pricing['cache_write_1h'], 10.00)
+        self.assertEqual(pricing['cache_write'], 6.25)
 
     def test_sonnet_pricing(self):
         """Verify Sonnet model pricing."""
@@ -121,6 +123,7 @@ class TestModelPricing(unittest.TestCase):
         self.assertEqual(pricing['input'], 3.00)
         self.assertEqual(pricing['output'], 15.00)
         self.assertEqual(pricing['cache_read'], 0.30)
+        self.assertEqual(pricing['cache_write_1h'], 6.00)
         self.assertEqual(pricing['cache_write'], 3.75)
 
     def test_haiku_pricing(self):
@@ -131,6 +134,7 @@ class TestModelPricing(unittest.TestCase):
         self.assertEqual(pricing['input'], 0.80)
         self.assertEqual(pricing['output'], 4.00)
         self.assertEqual(pricing['cache_read'], 0.08)
+        self.assertEqual(pricing['cache_write_1h'], 1.60)
         self.assertEqual(pricing['cache_write'], 1.00)
 
     def test_unknown_model_returns_default(self):

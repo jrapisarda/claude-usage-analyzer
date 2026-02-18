@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List
 
 import aiosqlite
 
+from ccwap.cost.pricing import get_pricing_for_model
 from ccwap.server.queries.date_helpers import local_today, build_date_filter
 
 
@@ -89,44 +90,66 @@ async def get_cost_by_token_type(
     date_to: Optional[str] = None,
     config: Optional[dict] = None,
 ) -> Dict[str, float]:
-    """Cost breakdown by token type using pre-calculated turn costs."""
+    """Cost breakdown by token type using per-model pricing and cache TTL tiers."""
     params: list = []
     filters = build_date_filter("timestamp", date_from, date_to, params)
 
     cursor = await db.execute(f"""
         SELECT
+            model,
             SUM(input_tokens) as input_tokens,
             SUM(output_tokens) as output_tokens,
             SUM(cache_read_tokens) as cache_read_tokens,
             SUM(cache_write_tokens) as cache_write_tokens,
-            SUM(cost) as total_cost
+            SUM(ephemeral_5m_tokens) as ephemeral_5m_tokens,
+            SUM(ephemeral_1h_tokens) as ephemeral_1h_tokens
         FROM turns
         WHERE timestamp IS NOT NULL {filters}
+        GROUP BY model
     """, params)
-    row = await cursor.fetchone()
+    rows = await cursor.fetchall()
 
-    total_cost = row[4] or 0.0
-    total_tokens = (row[0] or 0) + (row[1] or 0) + (row[2] or 0) + (row[3] or 0)
+    if not rows:
+        return {"input_cost": 0.0, "output_cost": 0.0, "cache_read_cost": 0.0, "cache_write_cost": 0.0, "total_cost": 0.0}
 
-    if total_tokens == 0:
-        return {"input_cost": 0, "output_cost": 0, "cache_read_cost": 0, "cache_write_cost": 0, "total_cost": 0}
+    cfg = config or {}
+    input_cost = 0.0
+    output_cost = 0.0
+    cache_read_cost = 0.0
+    cache_write_cost = 0.0
+    for row in rows:
+        model = row[0]
+        model_input_tokens = row[1] or 0
+        model_output_tokens = row[2] or 0
+        model_cache_read_tokens = row[3] or 0
+        model_cache_write_tokens = row[4] or 0
+        model_ephemeral_5m_tokens = row[5] or 0
+        model_ephemeral_1h_tokens = row[6] or 0
 
-    # Approximate cost split proportional to token counts weighted by avg cost
-    # Use default sonnet rates as weight factors
-    input_w = (row[0] or 0) * 3.0
-    output_w = (row[1] or 0) * 15.0
-    cache_read_w = (row[2] or 0) * 0.30
-    cache_write_w = (row[3] or 0) * 3.75
-    total_w = input_w + output_w + cache_read_w + cache_write_w
+        pricing = get_pricing_for_model(model, cfg)
+        write_5m_rate = pricing.get("cache_write_5m", pricing.get("cache_write", 0.0))
+        write_1h_rate = pricing.get("cache_write_1h", write_5m_rate * 1.6)
 
-    if total_w == 0:
-        return {"input_cost": 0, "output_cost": 0, "cache_read_cost": 0, "cache_write_cost": 0, "total_cost": total_cost}
+        tiered_write_tokens = model_ephemeral_5m_tokens + model_ephemeral_1h_tokens
+        if tiered_write_tokens == 0:
+            write_5m_tokens = model_cache_write_tokens
+            write_1h_tokens = 0
+        else:
+            write_5m_tokens = model_ephemeral_5m_tokens + max(0, model_cache_write_tokens - tiered_write_tokens)
+            write_1h_tokens = model_ephemeral_1h_tokens
+
+        input_cost += (model_input_tokens / 1_000_000) * pricing["input"]
+        output_cost += (model_output_tokens / 1_000_000) * pricing["output"]
+        cache_read_cost += (model_cache_read_tokens / 1_000_000) * pricing["cache_read"]
+        cache_write_cost += ((write_5m_tokens / 1_000_000) * write_5m_rate) + ((write_1h_tokens / 1_000_000) * write_1h_rate)
+
+    total_cost = input_cost + output_cost + cache_read_cost + cache_write_cost
 
     return {
-        "input_cost": total_cost * (input_w / total_w),
-        "output_cost": total_cost * (output_w / total_w),
-        "cache_read_cost": total_cost * (cache_read_w / total_w),
-        "cache_write_cost": total_cost * (cache_write_w / total_w),
+        "input_cost": input_cost,
+        "output_cost": output_cost,
+        "cache_read_cost": cache_read_cost,
+        "cache_write_cost": cache_write_cost,
         "total_cost": total_cost,
     }
 
@@ -228,6 +251,7 @@ async def get_cache_savings(
     db: aiosqlite.Connection,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    config: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """Cache savings analysis."""
     params: list = []
@@ -235,24 +259,31 @@ async def get_cache_savings(
 
     cursor = await db.execute(f"""
         SELECT
+            model,
             SUM(cache_read_tokens) as cache_read_tokens,
             SUM(input_tokens) as input_tokens,
             SUM(cost) as actual_cost
         FROM turns
         WHERE timestamp IS NOT NULL {filters}
+        GROUP BY model
     """, params)
-    row = await cursor.fetchone()
+    rows = await cursor.fetchall()
 
-    cache_read = row[0] or 0
-    input_tokens = row[1] or 0
-    actual_cost = row[2] or 0.0
+    cache_read = sum((row[1] or 0) for row in rows)
+    input_tokens = sum((row[2] or 0) for row in rows)
+    actual_cost = sum((row[3] or 0.0) for row in rows)
     total_input = input_tokens + cache_read
     cache_hit_rate = cache_read / total_input if total_input > 0 else 0.0
 
-    # Estimate cost without cache: cache_read tokens would have been full-price input
-    # Approximate savings using default sonnet input rate ($3/M) vs cache rate ($0.30/M)
-    savings_per_token = (3.00 - 0.30) / 1_000_000
-    estimated_savings = cache_read * savings_per_token
+    # Estimate cost without cache by model-specific input-vs-cache price difference.
+    cfg = config or {}
+    estimated_savings = 0.0
+    for row in rows:
+        model = row[0]
+        model_cache_read = row[1] or 0
+        pricing = get_pricing_for_model(model, cfg)
+        estimated_savings += (model_cache_read / 1_000_000) * max(0.0, pricing["input"] - pricing["cache_read"])
+
     cost_without_cache = actual_cost + estimated_savings
 
     return {
@@ -326,6 +357,7 @@ async def get_cache_simulation(
     target_hit_rate: float = 0.5,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    config: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """What-if: calculate cost savings if cache hit rate improved.
     Returns dict with: actual_cost, actual_cache_rate, simulated_cost, simulated_cache_rate, savings."""
@@ -334,20 +366,23 @@ async def get_cache_simulation(
 
     cursor = await db.execute(f"""
         SELECT
+            model,
             SUM(input_tokens) as input_tokens,
             SUM(cache_read_tokens) as cache_read_tokens,
             SUM(cost) as actual_cost
         FROM turns
         WHERE timestamp IS NOT NULL {filters}
+        GROUP BY model
     """, params)
-    row = await cursor.fetchone()
+    rows = await cursor.fetchall()
 
-    input_tokens = row[0] or 0
-    cache_read = row[1] or 0
-    actual_cost = row[2] or 0.0
+    input_tokens = sum((row[1] or 0) for row in rows)
+    cache_read = sum((row[2] or 0) for row in rows)
+    actual_cost = sum((row[3] or 0.0) for row in rows)
     total_input = input_tokens + cache_read
 
     actual_cache_rate = cache_read / total_input if total_input > 0 else 0.0
+    target_hit_rate = max(0.0, min(target_hit_rate, 1.0))
 
     if total_input == 0 or target_hit_rate <= actual_cache_rate:
         return {
@@ -360,12 +395,30 @@ async def get_cache_simulation(
 
     # Simulate: if cache_read increased to target_hit_rate of total_input
     simulated_cache_read = total_input * target_hit_rate
-    simulated_input = total_input - simulated_cache_read
 
     # Tokens that shift from full-price input to cache-price
-    tokens_shifted = simulated_cache_read - cache_read
-    # Pricing: input=$3/Mtok, cache_read=$0.30/Mtok
-    savings = tokens_shifted * (3.00 - 0.30) / 1_000_000
+    tokens_shifted = min(simulated_cache_read - cache_read, input_tokens)
+    if tokens_shifted <= 0:
+        return {
+            "actual_cost": actual_cost,
+            "actual_cache_rate": actual_cache_rate,
+            "simulated_cost": actual_cost,
+            "simulated_cache_rate": target_hit_rate,
+            "savings": 0.0,
+        }
+
+    cfg = config or {}
+    savings = 0.0
+    for row in rows:
+        model = row[0]
+        model_input_tokens = row[1] or 0
+        if model_input_tokens <= 0:
+            continue
+        model_share = model_input_tokens / input_tokens if input_tokens > 0 else 0.0
+        model_shift_tokens = tokens_shifted * model_share
+        pricing = get_pricing_for_model(model, cfg)
+        savings += (model_shift_tokens / 1_000_000) * max(0.0, pricing["input"] - pricing["cache_read"])
+
     simulated_cost = actual_cost - savings
 
     return {

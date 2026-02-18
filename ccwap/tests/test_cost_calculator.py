@@ -31,14 +31,14 @@ class TestOpusCostCalculation(unittest.TestCase):
         Verify exact cost calculation for Opus model from requirements doc.
 
         Sample: 10 input, 31971 cache_write, 12832 cache_read, 3 output tokens
-        Expected: $0.619079
+        Expected: $0.206360
 
         Breakdown:
-        - Input: 10/1M * $15.00 = $0.000150
-        - Output: 3/1M * $75.00 = $0.000225
-        - Cache Read: 12832/1M * $1.50 = $0.019248
-        - Cache Write: 31971/1M * $18.75 = $0.599456
-        - Total: $0.619079
+        - Input: 10/1M * $5.00 = $0.000050
+        - Output: 3/1M * $25.00 = $0.000075
+        - Cache Read: 12832/1M * $0.50 = $0.006416
+        - Cache Write: 31971/1M * $6.25 = $0.199819
+        - Total: $0.206360
         """
         cost = calculate_turn_cost(
             input_tokens=10,
@@ -49,8 +49,7 @@ class TestOpusCostCalculation(unittest.TestCase):
             config=self.config
         )
 
-        # Should be within 1 cent of $0.619079
-        self.assertAlmostEqual(cost, 0.619079, delta=0.01)
+        self.assertAlmostEqual(cost, 0.206360, delta=0.01)
 
     def test_opus_cost_breakdown(self):
         """Verify Opus cost breakdown matches expected per-component costs."""
@@ -63,14 +62,14 @@ class TestOpusCostCalculation(unittest.TestCase):
             config=self.config
         )
 
-        self.assertAlmostEqual(breakdown['input_cost'], 0.000150, places=6)
-        self.assertAlmostEqual(breakdown['output_cost'], 0.000225, places=6)
-        self.assertAlmostEqual(breakdown['cache_read_cost'], 0.019248, places=5)
-        self.assertAlmostEqual(breakdown['cache_write_cost'], 0.599456, places=4)
+        self.assertAlmostEqual(breakdown['input_cost'], 0.000050, places=6)
+        self.assertAlmostEqual(breakdown['output_cost'], 0.000075, places=6)
+        self.assertAlmostEqual(breakdown['cache_read_cost'], 0.006416, places=5)
+        self.assertAlmostEqual(breakdown['cache_write_cost'], 0.199819, places=4)
 
     def test_opus_output_is_most_expensive(self):
-        """Verify Opus output tokens are correctly priced at $75/MTok."""
-        # 1000 output tokens should cost $0.075
+        """Verify Opus output tokens are correctly priced at $25/MTok."""
+        # 1000 output tokens should cost $0.025
         cost = calculate_turn_cost(
             input_tokens=0,
             output_tokens=1000,
@@ -80,7 +79,7 @@ class TestOpusCostCalculation(unittest.TestCase):
             config=self.config
         )
 
-        expected = 1000 / 1_000_000 * 75.00
+        expected = 1000 / 1_000_000 * 25.00
         self.assertAlmostEqual(cost, expected, places=6)
 
     def test_opus_4_6_cost_calculation(self):
@@ -140,8 +139,8 @@ class TestSonnetCostCalculation(unittest.TestCase):
     def setUp(self):
         self.config = load_config()
 
-    def test_sonnet_is_5x_cheaper_than_opus_4_5_for_output(self):
-        """Verify Sonnet output is 5x cheaper than Opus 4.5."""
+    def test_sonnet_is_cheaper_than_opus_4_5_for_output(self):
+        """Verify Sonnet output is cheaper than Opus 4.5."""
         tokens = 10000
 
         opus_cost = calculate_turn_cost(
@@ -162,13 +161,13 @@ class TestSonnetCostCalculation(unittest.TestCase):
             config=self.config
         )
 
-        # Opus 4.5 output: $75/MTok, Sonnet output: $15/MTok
-        # Ratio should be 5:1
+        # Opus 4.5 output: $25/MTok, Sonnet output: $15/MTok
+        # Ratio should be 5:3
         ratio = opus_cost / sonnet_cost
-        self.assertAlmostEqual(ratio, 5.0, places=1)
+        self.assertAlmostEqual(ratio, (25.0 / 15.0), places=2)
 
-    def test_opus_4_6_cheaper_than_opus_4_5(self):
-        """Verify Opus 4.6 is cheaper than Opus 4.5."""
+    def test_opus_4_6_and_4_5_are_same_price(self):
+        """Verify Opus 4.6 and Opus 4.5 use the same pricing tier."""
         tokens = 10000
 
         opus_4_5_cost = calculate_turn_cost(
@@ -189,7 +188,7 @@ class TestSonnetCostCalculation(unittest.TestCase):
             config=self.config
         )
 
-        self.assertLess(opus_4_6_cost, opus_4_5_cost)
+        self.assertAlmostEqual(opus_4_6_cost, opus_4_5_cost, places=10)
 
     def test_sonnet_pricing_all_variants(self):
         """Verify all Sonnet variants use same pricing."""
@@ -373,10 +372,10 @@ class TestSessionCostCalculation(unittest.TestCase):
 
         session_cost = calculate_session_cost([opus_turn, haiku_turn], self.config)
 
-        # Opus output: 1000/1M * $75 = $0.075
+        # Opus output: 1000/1M * $25 = $0.025
         # Haiku output: 1000/1M * $4 = $0.004
-        # Total should be $0.079
-        expected = 0.075 + 0.004
+        # Total should be $0.029
+        expected = 0.025 + 0.004
         self.assertAlmostEqual(session_cost, expected, places=6)
 
 
@@ -437,9 +436,41 @@ class TestEdgeCases(unittest.TestCase):
             config=self.config
         )
 
-        # 10M * ($15 + $75 + $1.50 + $18.75) / 1M = $1102.50
-        expected = 10 * (15.00 + 75.00 + 1.50 + 18.75)
+        # 10M * ($5 + $25 + $0.50 + $6.25) / 1M = $367.50
+        expected = 10 * (5.00 + 25.00 + 0.50 + 6.25)
         self.assertAlmostEqual(cost, expected, places=2)
+
+    def test_cache_write_1h_tier_is_used(self):
+        """Verify 1h cache-write tokens use the 1h rate."""
+        cost = calculate_turn_cost(
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_write_tokens=1_000_000,
+            model='claude-sonnet-4-20250514',
+            config=self.config,
+            ephemeral_5m_tokens=0,
+            ephemeral_1h_tokens=1_000_000,
+        )
+
+        # Sonnet 1h write rate is $6.00 / MTok
+        self.assertAlmostEqual(cost, 6.0, places=6)
+
+    def test_cache_write_tiers_with_legacy_remainder(self):
+        """Verify tiered cache writes plus legacy remainder are priced correctly."""
+        cost = calculate_turn_cost(
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_write_tokens=3_000_000,
+            model='claude-sonnet-4-20250514',
+            config=self.config,
+            ephemeral_5m_tokens=1_000_000,
+            ephemeral_1h_tokens=1_000_000,
+        )
+
+        # 1M at 5m ($3.75) + 1M at 1h ($6.00) + 1M remainder at 5m ($3.75)
+        self.assertAlmostEqual(cost, 13.5, places=6)
 
     def test_empty_session_zero_cost(self):
         """Verify empty session has zero cost."""

@@ -64,6 +64,7 @@ export function DataTable<TData, TValue>({
   )
 
   const isServerSide = !!pagination?.onPageChange && !!externalSorting?.onSort
+  const shouldPaginate = !!pagination
 
   const paginationState: PaginationState | undefined = pagination
     ? { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize }
@@ -88,7 +89,7 @@ export function DataTable<TData, TValue>({
     },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: isServerSide ? undefined : getSortedRowModel(),
-    getPaginationRowModel: isServerSide ? undefined : getPaginationRowModel(),
+    getPaginationRowModel: shouldPaginate && !isServerSide ? getPaginationRowModel() : undefined,
     ...(pagination ? { pageCount: pagination.pageCount, manualPagination: isServerSide } : {}),
     ...(externalSorting ? { manualSorting: isServerSide } : {}),
   })

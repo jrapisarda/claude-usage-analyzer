@@ -22,7 +22,13 @@ interface CustomPreset {
   to: string
 }
 
-const EMPTY_PRICING_ENTRY: PricingEntry = { input: 0, output: 0, cache_read: 0, cache_write: 0 }
+const EMPTY_PRICING_ENTRY: PricingEntry = {
+  input: 0,
+  output: 0,
+  cache_read: 0,
+  cache_write_5m: 0,
+  cache_write_1h: 0,
+}
 
 function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
   const updatePricing = useUpdatePricing()
@@ -108,9 +114,10 @@ function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
           <TableRow>
             <TableHead>Model</TableHead>
             <TableHead className="text-right">Input $/M</TableHead>
+            <TableHead className="text-right">5m Write $/M</TableHead>
+            <TableHead className="text-right">1h Write $/M</TableHead>
+            <TableHead className="text-right">Hits/Refresh $/M</TableHead>
             <TableHead className="text-right">Output $/M</TableHead>
-            <TableHead className="text-right">Cache Read $/M</TableHead>
-            <TableHead className="text-right">Cache Write $/M</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -126,7 +133,7 @@ function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
                   className="font-mono text-xs"
                 />
               </TableCell>
-              {(['input', 'output', 'cache_read', 'cache_write'] as const).map(field => (
+              {(['input', 'cache_write_5m', 'cache_write_1h', 'cache_read', 'output'] as const).map(field => (
                 <TableCell key={`new-${field}`}>
                   <Input
                     type="number"
@@ -151,7 +158,7 @@ function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
           )}
           {isAddingModel && addError && (
             <TableRow>
-              <TableCell colSpan={6} className="text-xs text-destructive">
+              <TableCell colSpan={7} className="text-xs text-destructive">
                 {addError}
               </TableCell>
             </TableRow>
@@ -161,7 +168,7 @@ function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
               <TableCell className="font-mono text-xs">{model}</TableCell>
               {editModel === model ? (
                 <>
-                  {(['input', 'output', 'cache_read', 'cache_write'] as const).map(field => (
+                  {(['input', 'cache_write_5m', 'cache_write_1h', 'cache_read', 'output'] as const).map(field => (
                     <TableCell key={field}>
                       <Input
                         type="number"
@@ -181,9 +188,10 @@ function PricingEditor({ pricing }: { pricing: Record<string, PricingEntry> }) {
               ) : (
                 <>
                   <TableCell className="font-mono text-right">${entry.input.toFixed(2)}</TableCell>
-                  <TableCell className="font-mono text-right">${entry.output.toFixed(2)}</TableCell>
+                  <TableCell className="font-mono text-right">${entry.cache_write_5m.toFixed(2)}</TableCell>
+                  <TableCell className="font-mono text-right">${entry.cache_write_1h.toFixed(2)}</TableCell>
                   <TableCell className="font-mono text-right">${entry.cache_read.toFixed(2)}</TableCell>
-                  <TableCell className="font-mono text-right">${entry.cache_write.toFixed(2)}</TableCell>
+                  <TableCell className="font-mono text-right">${entry.output.toFixed(2)}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="link" size="sm" onClick={() => startEdit(model, entry)}>
                       Edit

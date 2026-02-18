@@ -6,11 +6,44 @@ the old tool. All costs MUST flow through calculate_turn_cost().
 
 CRITICAL: Never use flat-rate calculations. Always use:
 - Per-model pricing
-- Per-token-type pricing (input, output, cache_read, cache_write)
+- Per-token-type pricing (input, output, cache hits/refreshes, cache writes)
 """
 
 from typing import Dict, Any, List, Optional
 from ccwap.cost.pricing import get_pricing_for_model
+
+
+def _calculate_cache_write_cost(
+    cache_write_tokens: int,
+    ephemeral_5m_tokens: int,
+    ephemeral_1h_tokens: int,
+    pricing: Dict[str, float],
+) -> float:
+    """
+    Calculate cache write cost across 5m/1h TTL tiers.
+
+    Backward compatibility:
+    - If tiered tokens are unavailable, falls back to legacy cache_write_tokens
+      at the 5m write rate.
+    - If tiered tokens are partially available, any remainder uses 5m rate.
+    """
+    write_5m_rate = pricing.get("cache_write_5m", pricing.get("cache_write", 0.0))
+    write_1h_rate = pricing.get("cache_write_1h", write_5m_rate * 1.6)
+
+    cache_write_tokens = max(0, cache_write_tokens or 0)
+    ephemeral_5m_tokens = max(0, ephemeral_5m_tokens or 0)
+    ephemeral_1h_tokens = max(0, ephemeral_1h_tokens or 0)
+
+    tiered_total = ephemeral_5m_tokens + ephemeral_1h_tokens
+    if tiered_total == 0:
+        return (cache_write_tokens / 1_000_000) * write_5m_rate
+
+    legacy_remainder = max(0, cache_write_tokens - tiered_total)
+    return (
+        (ephemeral_5m_tokens / 1_000_000) * write_5m_rate
+        + (ephemeral_1h_tokens / 1_000_000) * write_1h_rate
+        + (legacy_remainder / 1_000_000) * write_5m_rate
+    )
 
 
 def calculate_turn_cost(
@@ -19,7 +52,9 @@ def calculate_turn_cost(
     cache_read_tokens: int,
     cache_write_tokens: int,
     model: Optional[str],
-    config: Dict[str, Any]
+    config: Dict[str, Any],
+    ephemeral_5m_tokens: int = 0,
+    ephemeral_1h_tokens: int = 0,
 ) -> float:
     """
     Calculate accurate cost for a single turn.
@@ -39,9 +74,11 @@ def calculate_turn_cost(
         input_tokens: Fresh input tokens (not cached)
         output_tokens: Output/completion tokens
         cache_read_tokens: Tokens read from cache
-        cache_write_tokens: Tokens written to cache
+        cache_write_tokens: Legacy cache write token total
         model: Model identifier for pricing lookup
         config: Configuration dict with pricing table
+        ephemeral_5m_tokens: Cache creation tokens at 5m TTL
+        ephemeral_1h_tokens: Cache creation tokens at 1h TTL
 
     Returns:
         Cost in dollars for this turn
@@ -53,14 +90,19 @@ def calculate_turn_cost(
     input_tokens = max(0, input_tokens or 0)
     output_tokens = max(0, output_tokens or 0)
     cache_read_tokens = max(0, cache_read_tokens or 0)
-    cache_write_tokens = max(0, cache_write_tokens or 0)
+    cache_write_cost = _calculate_cache_write_cost(
+        cache_write_tokens=cache_write_tokens,
+        ephemeral_5m_tokens=ephemeral_5m_tokens,
+        ephemeral_1h_tokens=ephemeral_1h_tokens,
+        pricing=pricing,
+    )
 
     # Calculate cost per token type (prices are per 1M tokens)
     cost = (
         (input_tokens / 1_000_000) * pricing['input'] +
         (output_tokens / 1_000_000) * pricing['output'] +
         (cache_read_tokens / 1_000_000) * pricing['cache_read'] +
-        (cache_write_tokens / 1_000_000) * pricing['cache_write']
+        cache_write_cost
     )
 
     return cost
@@ -91,7 +133,9 @@ def calculate_session_cost(
             cache_read_tokens=turn.get('cache_read_tokens', 0),
             cache_write_tokens=turn.get('cache_write_tokens', 0),
             model=turn.get('model'),
-            config=config
+            config=config,
+            ephemeral_5m_tokens=turn.get('ephemeral_5m_tokens', 0),
+            ephemeral_1h_tokens=turn.get('ephemeral_1h_tokens', 0),
         )
     return total
 
@@ -102,7 +146,9 @@ def calculate_cost_breakdown(
     cache_read_tokens: int,
     cache_write_tokens: int,
     model: Optional[str],
-    config: Dict[str, Any]
+    config: Dict[str, Any],
+    ephemeral_5m_tokens: int = 0,
+    ephemeral_1h_tokens: int = 0,
 ) -> Dict[str, float]:
     """
     Calculate cost with breakdown by token type.
@@ -111,7 +157,7 @@ def calculate_cost_breakdown(
 
     Returns:
         Dict with keys: input_cost, output_cost, cache_read_cost,
-        cache_write_cost, total_cost
+        cache_write_5m_cost, cache_write_1h_cost, cache_write_cost, total_cost
     """
     pricing = get_pricing_for_model(model, config)
 
@@ -120,16 +166,32 @@ def calculate_cost_breakdown(
     output_tokens = max(0, output_tokens or 0)
     cache_read_tokens = max(0, cache_read_tokens or 0)
     cache_write_tokens = max(0, cache_write_tokens or 0)
+    ephemeral_5m_tokens = max(0, ephemeral_5m_tokens or 0)
+    ephemeral_1h_tokens = max(0, ephemeral_1h_tokens or 0)
 
     input_cost = (input_tokens / 1_000_000) * pricing['input']
     output_cost = (output_tokens / 1_000_000) * pricing['output']
     cache_read_cost = (cache_read_tokens / 1_000_000) * pricing['cache_read']
-    cache_write_cost = (cache_write_tokens / 1_000_000) * pricing['cache_write']
+    cache_write_5m_rate = pricing.get("cache_write_5m", pricing.get("cache_write", 0.0))
+    cache_write_1h_rate = pricing.get("cache_write_1h", cache_write_5m_rate * 1.6)
+
+    tiered_total = ephemeral_5m_tokens + ephemeral_1h_tokens
+    if tiered_total == 0:
+        cache_write_5m_cost = (cache_write_tokens / 1_000_000) * cache_write_5m_rate
+        cache_write_1h_cost = 0.0
+    else:
+        legacy_remainder = max(0, cache_write_tokens - tiered_total)
+        cache_write_5m_cost = ((ephemeral_5m_tokens + legacy_remainder) / 1_000_000) * cache_write_5m_rate
+        cache_write_1h_cost = (ephemeral_1h_tokens / 1_000_000) * cache_write_1h_rate
+
+    cache_write_cost = cache_write_5m_cost + cache_write_1h_cost
 
     return {
         'input_cost': input_cost,
         'output_cost': output_cost,
         'cache_read_cost': cache_read_cost,
+        'cache_write_5m_cost': cache_write_5m_cost,
+        'cache_write_1h_cost': cache_write_1h_cost,
         'cache_write_cost': cache_write_cost,
         'total_cost': input_cost + output_cost + cache_read_cost + cache_write_cost
     }
