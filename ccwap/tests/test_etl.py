@@ -298,20 +298,82 @@ class TestAgentFilesProcessing(unittest.TestCase):
         process_file(self.conn, agent_path, self.config)
         self.conn.commit()
 
-        # Check is_agent flag
-        cursor = self.conn.execute(
-            "SELECT is_agent FROM sessions WHERE session_id LIKE 'agent-%'"
-        )
-        row = cursor.fetchone()
-
-        # The sample_agent.jsonl has sessionId: agent-session-456
-        # and the filename is sample_agent.jsonl (doesn't start with agent-)
-        # Let's check what was actually inserted
+        # sample_agent.jsonl does not follow agent-*.jsonl naming,
+        # so detection must come from sourceToolUseID in entry content.
         cursor = self.conn.execute("SELECT session_id, is_agent FROM sessions")
         rows = cursor.fetchall()
 
-        # There should be at least one session
         self.assertGreater(len(rows), 0)
+        self.assertTrue(any(r['is_agent'] == 1 for r in rows))
+
+    def test_nested_subagent_named_file_attributed_to_parent_session(self):
+        """Nested subagent files with custom names should not fail FK checks."""
+        parent_session_id = '123e4567-e89b-12d3-a456-426614174000'
+        project_dir = Path(self.temp_dir) / 'proj'
+        project_dir.mkdir()
+
+        # Parent/main session file (must exist first for FK)
+        parent_file = project_dir / f'{parent_session_id}.jsonl'
+        parent_file.write_text(
+            '{"uuid":"p-1","timestamp":"2026-01-15T10:00:00Z","type":"user"}\n'
+        )
+
+        nested_subagent_dir = project_dir / parent_session_id / 'subagents'
+        nested_subagent_dir.mkdir(parents=True)
+        nested_subagent_file = nested_subagent_dir / 'unit-test-writer.jsonl'
+        nested_subagent_file.write_text(
+            '{"uuid":"a-1","timestamp":"2026-01-15T10:01:00Z","type":"assistant","sourceToolUseID":"spawn-1","message":{"content":[{"type":"tool_use","id":"t-1","name":"Bash","input":{"command":"echo hi"}}],"usage":{"input_tokens":5,"output_tokens":3}}}\n'
+            '{"uuid":"a-2","timestamp":"2026-01-15T10:01:01Z","type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t-1","content":"hi"}]}}\n'
+        )
+
+        process_file(self.conn, parent_file, self.config)
+        stats = process_file(self.conn, nested_subagent_file, self.config)
+        self.conn.commit()
+
+        self.assertEqual(stats['errors_skipped'], 0)
+        self.assertGreater(stats['turns_inserted'], 0)
+        self.assertGreater(stats['tool_calls_inserted'], 0)
+
+        cursor = self.conn.execute(
+            "SELECT session_id FROM turns WHERE uuid = 'a-1'"
+        )
+        row = cursor.fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row['session_id'], parent_session_id)
+
+    def test_nested_subagent_missing_parent_falls_back_to_agent_session(self):
+        """If parent session is missing, nested subagent should still ingest safely."""
+        parent_session_id = '123e4567-e89b-12d3-a456-426614174000'
+        project_dir = Path(self.temp_dir) / 'proj'
+        project_dir.mkdir()
+
+        nested_subagent_dir = project_dir / parent_session_id / 'subagents'
+        nested_subagent_dir.mkdir(parents=True)
+        nested_subagent_file = nested_subagent_dir / 'agent-a4736c8.jsonl'
+        nested_subagent_file.write_text(
+            '{"uuid":"orphan-a-1","timestamp":"2026-01-15T10:01:00Z","type":"assistant","sourceToolUseID":"spawn-1","message":{"usage":{"input_tokens":5,"output_tokens":3}}}\n'
+        )
+
+        stats = process_file(self.conn, nested_subagent_file, self.config)
+        self.conn.commit()
+
+        self.assertEqual(stats['errors_skipped'], 0)
+        self.assertGreater(stats['turns_inserted'], 0)
+
+        cursor = self.conn.execute(
+            "SELECT session_id, is_agent FROM sessions WHERE session_id = ?",
+            ('a4736c8',)
+        )
+        session_row = cursor.fetchone()
+        self.assertIsNotNone(session_row)
+        self.assertEqual(session_row['is_agent'], 1)
+
+        cursor = self.conn.execute(
+            "SELECT session_id FROM turns WHERE uuid = 'orphan-a-1'"
+        )
+        turn_row = cursor.fetchone()
+        self.assertIsNotNone(turn_row)
+        self.assertEqual(turn_row['session_id'], 'a4736c8')
 
 
 if __name__ == '__main__':

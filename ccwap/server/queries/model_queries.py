@@ -121,31 +121,55 @@ async def get_model_scatter(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Per-session cost vs LOC by model for scatter plot."""
-    conditions = []
-    params = []
-    date_params: list = []
-    date_clause = build_date_filter("s.first_timestamp", date_from, date_to, date_params)
-    if date_clause:
-        conditions.append(date_clause.lstrip(" AND "))
-        params.extend(date_params)
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    """Per-session/model cost vs LOC points for scatter plot."""
+    turn_params: list = []
+    turn_date_clause = build_date_filter("t.timestamp", date_from, date_to, turn_params)
+    tool_params: list = []
+    tool_date_clause = build_date_filter("tc.timestamp", date_from, date_to, tool_params)
 
     query = f"""
+        WITH cost_by_session_model AS (
+            SELECT
+                t.session_id,
+                t.model,
+                SUM(t.cost) AS total_cost
+            FROM turns t
+            WHERE t.model IS NOT NULL
+              AND t.model NOT LIKE '<%'
+              {turn_date_clause}
+            GROUP BY t.session_id, t.model
+        ),
+        loc_by_session_model AS (
+            SELECT
+                tc.session_id,
+                t.model,
+                SUM(tc.loc_written) AS loc_written
+            FROM tool_calls tc
+            JOIN turns t ON tc.turn_id = t.id
+            WHERE t.model IS NOT NULL
+              AND t.model NOT LIKE '<%'
+              {tool_date_clause}
+            GROUP BY tc.session_id, t.model
+        ),
+        keys AS (
+            SELECT session_id, model FROM cost_by_session_model
+            UNION
+            SELECT session_id, model FROM loc_by_session_model
+        )
         SELECT
-            s.session_id,
-            (SELECT t.model FROM turns t WHERE t.session_id = s.session_id
-             AND t.model IS NOT NULL AND t.model NOT LIKE '<%'
-             ORDER BY t.timestamp DESC LIMIT 1) as model,
-            COALESCE((SELECT SUM(t.cost) FROM turns t
-                      WHERE t.session_id = s.session_id), 0) as total_cost,
-            COALESCE((SELECT SUM(tc.loc_written) FROM tool_calls tc
-                      WHERE tc.session_id = s.session_id), 0) as loc_written
-        FROM sessions s
-        {where}
+            k.session_id,
+            k.model,
+            COALESCE(c.total_cost, 0) AS total_cost,
+            COALESCE(l.loc_written, 0) AS loc_written
+        FROM keys k
+        LEFT JOIN cost_by_session_model c
+            ON c.session_id = k.session_id AND c.model = k.model
+        LEFT JOIN loc_by_session_model l
+            ON l.session_id = k.session_id AND l.model = k.model
         ORDER BY total_cost DESC
         LIMIT 200
     """
+    params = [*turn_params, *tool_params]
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()
     return [{

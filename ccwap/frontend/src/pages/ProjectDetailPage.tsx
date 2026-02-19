@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useParams, Link } from 'react-router'
 import { useDateRange } from '@/hooks/useDateRange'
 import { useProjectDetail } from '@/api/projects'
@@ -74,8 +75,19 @@ const sessionColumns: ColumnDef<SessionRow, unknown>[] = [
 
 export default function ProjectDetailPage() {
   const { path } = useParams<{ path: string }>()
-  const { dateRange } = useDateRange()
+  const { dateRange, preset } = useDateRange()
   const { data, isLoading, error } = useProjectDetail(path || '', dateRange)
+  const dateQueryParams = useMemo(() => {
+    const params = new URLSearchParams()
+    if (preset) {
+      params.set('preset', preset)
+    } else {
+      if (dateRange.from) params.set('from', dateRange.from)
+      if (dateRange.to) params.set('to', dateRange.to)
+    }
+    return params.toString()
+  }, [dateRange.from, dateRange.to, preset])
+  const projectsHref = dateQueryParams ? `/projects?${dateQueryParams}` : '/projects'
 
   const projectDisplay = data?.project_display ?? path ?? ''
 
@@ -83,7 +95,7 @@ export default function ProjectDetailPage() {
     return (
       <PageLayout
         title="..."
-        breadcrumbs={[{ label: 'Projects', href: '/projects' }, { label: '...' }]}
+        breadcrumbs={[{ label: 'Projects', href: projectsHref }, { label: '...' }]}
       >
         <MetricCardGrid skeleton count={3} className="grid-cols-2 sm:grid-cols-3 mb-6" />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
@@ -101,7 +113,7 @@ export default function ProjectDetailPage() {
       title={projectDisplay}
       subtitle={`${formatNumber(data.total_sessions)} sessions | ${formatCurrency(data.total_cost)} total cost | ${formatNumber(data.total_loc)} LOC`}
       breadcrumbs={[
-        { label: 'Projects', href: '/projects' },
+        { label: 'Projects', href: projectsHref },
         { label: projectDisplay },
       ]}
     >

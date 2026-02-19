@@ -1,4 +1,4 @@
-import { useState, useCallback, Fragment } from 'react'
+import { useState, useCallback, useMemo, Fragment } from 'react'
 import { Link } from 'react-router'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Search } from 'lucide-react'
@@ -12,7 +12,7 @@ import { useProjects } from '@/api/projects'
 import type { ProjectData } from '@/api/projects'
 import { formatCurrency, formatNumber, formatPercent, formatDuration } from '@/lib/utils'
 
-function ExpandedRow({ project }: { project: ProjectData }) {
+function ExpandedRow({ project, dateQueryParams }: { project: ProjectData; dateQueryParams: string }) {
   const fields = [
     ['Sessions', formatNumber(project.sessions)],
     ['Messages', formatNumber(project.messages)],
@@ -52,7 +52,7 @@ function ExpandedRow({ project }: { project: ProjectData }) {
       </div>
       <div className="mt-3">
         <Link
-          to={`/sessions?project=${encodeURIComponent(project.project_path)}`}
+          to={`/sessions?project=${encodeURIComponent(project.project_path)}${dateQueryParams ? `&${dateQueryParams}` : ''}`}
           className="text-sm text-primary hover:underline"
         >
           View Sessions &rarr;
@@ -126,12 +126,23 @@ const projectColumns: ColumnDef<ProjectData, unknown>[] = [
 ]
 
 export default function ProjectsPage() {
-  const { dateRange } = useDateRange()
+  const { dateRange, preset } = useDateRange()
   const [sort, setSort] = useState<SortField>('cost')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
+
+  const dateQueryParams = useMemo(() => {
+    const params = new URLSearchParams()
+    if (preset) {
+      params.set('preset', preset)
+    } else {
+      if (dateRange.from) params.set('from', dateRange.from)
+      if (dateRange.to) params.set('to', dateRange.to)
+    }
+    return params.toString()
+  }, [dateRange.from, dateRange.to, preset])
 
   const { data, isLoading, error } = useProjects(dateRange, sort, order, page, search || undefined)
 
@@ -226,7 +237,7 @@ export default function ProjectsPage() {
                     >
                       <td className="px-4 py-3 font-medium truncate max-w-xs">
                         <Link
-                          to={`/projects/${btoa(unescape(encodeURIComponent(p.project_path)))}`}
+                          to={`/projects/${btoa(unescape(encodeURIComponent(p.project_path)))}${dateQueryParams ? `?${dateQueryParams}` : ''}`}
                           onClick={e => e.stopPropagation()}
                           className="text-primary hover:underline"
                         >
@@ -245,7 +256,7 @@ export default function ProjectsPage() {
                     {expandedRow === p.project_path && (
                       <tr key={`${p.project_path}-expanded`}>
                         <td colSpan={projectColumns.length} className="p-0">
-                          <ExpandedRow project={p} />
+                          <ExpandedRow project={p} dateQueryParams={dateQueryParams} />
                         </td>
                       </tr>
                     )}

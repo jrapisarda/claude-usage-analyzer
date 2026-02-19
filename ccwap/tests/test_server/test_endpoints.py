@@ -3273,6 +3273,60 @@ class TestModelQueries:
         session_ids = {item["session_id"] for item in result}
         assert "sess-001" in session_ids
 
+    async def test_get_model_scatter_splits_session_by_model_activity_window(self, async_db):
+        """Scatter should emit separate points per (session, model) using activity timestamps."""
+        # Session starts before range.
+        await async_db.execute("""
+            INSERT INTO sessions (
+                session_id, project_path, project_display, first_timestamp,
+                last_timestamp, duration_seconds, is_agent, cc_version, git_branch, file_path
+            ) VALUES (
+                'sess-mixed-models', '/path/proj-alpha', 'proj-alpha', '2026-01-01T10:00:00',
+                '2026-02-05T11:00:00', 1200, 0, '1.0.23', 'main', '/logs/mixed.jsonl'
+            )
+        """)
+
+        # Two assistant turns in range with different models.
+        await async_db.execute("""
+            INSERT INTO turns (
+                session_id, uuid, entry_type, timestamp, model,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                thinking_chars, cost, stop_reason, is_sidechain, is_meta
+            ) VALUES
+                ('sess-mixed-models', 'mix-opus', 'assistant', '2026-02-05T10:10:00', 'claude-opus-4-5-20251101',
+                 10, 20, 0, 0, 0, 0.20, 'end_turn', 0, 0),
+                ('sess-mixed-models', 'mix-sonnet', 'assistant', '2026-02-05T10:20:00', 'claude-sonnet-4-20250514',
+                 10, 20, 0, 0, 0, 0.10, 'end_turn', 0, 0)
+        """)
+
+        # Tool calls tied to those turns; LOC should split by model.
+        await async_db.execute("""
+            INSERT INTO tool_calls (
+                session_id, turn_id, tool_use_id, tool_name, timestamp, success,
+                file_path, language, loc_written, lines_added, lines_deleted
+            ) VALUES
+                ('sess-mixed-models', (SELECT id FROM turns WHERE uuid = 'mix-opus'), 'mix-tc-opus', 'Write', '2026-02-05T10:11:00', 1,
+                 '/path/opus.py', 'python', 120, 120, 0),
+                ('sess-mixed-models', (SELECT id FROM turns WHERE uuid = 'mix-sonnet'), 'mix-tc-sonnet', 'Write', '2026-02-05T10:21:00', 1,
+                 '/path/sonnet.py', 'python', 80, 80, 0)
+        """)
+        await async_db.commit()
+
+        result = await model_queries.get_model_scatter(
+            async_db, date_from="2026-02-03", date_to="2026-02-06"
+        )
+
+        rows = [
+            r for r in result
+            if r["session_id"] == "sess-mixed-models"
+        ]
+        models = {r["model"] for r in rows}
+        assert "claude-opus-4-5-20251101" in models
+        assert "claude-sonnet-4-20250514" in models
+        by_model = {r["model"]: r for r in rows}
+        assert by_model["claude-opus-4-5-20251101"]["loc_written"] == 120
+        assert by_model["claude-sonnet-4-20250514"]["loc_written"] == 80
+
 
 # =====================================================================
 # Workflows endpoint and query tests
@@ -3444,3 +3498,36 @@ class TestProjectDetailQueries:
             async_db, "/nonexistent/path"
         )
         assert result is None
+
+    async def test_get_project_detail_filters_by_activity_timestamp(self, async_db):
+        """Sessions started before range but active inside range must be included."""
+        await async_db.execute("""
+            INSERT INTO sessions (
+                session_id, project_path, project_display, first_timestamp,
+                last_timestamp, duration_seconds, is_agent, cc_version, git_branch, file_path
+            ) VALUES (
+                'sess-old-active', '/path/proj-alpha', 'proj-alpha', '2026-01-01T10:00:00',
+                '2026-02-05T11:00:00', 600, 0, '1.0.23', 'main', '/logs/old-active.jsonl'
+            )
+        """)
+        await async_db.execute("""
+            INSERT INTO turns (
+                session_id, uuid, entry_type, timestamp, model,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                thinking_chars, cost, stop_reason, is_sidechain, is_meta
+            ) VALUES (
+                'sess-old-active', 'u-old-active-1', 'assistant', '2026-02-05T10:30:00',
+                'claude-sonnet-4-20250514', 10, 20, 5, 2, 0, 0.33, 'end_turn', 0, 0
+            )
+        """)
+        await async_db.commit()
+
+        result = await project_detail_queries.get_project_detail(
+            async_db, "/path/proj-alpha",
+            date_from="2026-02-03", date_to="2026-02-06"
+        )
+
+        assert result is not None
+        # Base fixture has 2 proj-alpha sessions in range; this adds one more via activity timestamp.
+        assert result["total_sessions"] == 3
+        assert any(s["session_id"] == "sess-old-active" for s in result["sessions"])

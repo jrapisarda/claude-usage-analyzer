@@ -11,7 +11,11 @@ from ccwap.models.schema import (
     set_schema_version, _create_initial_schema, _migrate_v1_to_v2,
     _migrate_v2_to_v3, CURRENT_SCHEMA_VERSION,
 )
-from ccwap.etl.loader import materialize_daily_summaries, upsert_turns_batch
+from ccwap.etl.loader import (
+    materialize_daily_summaries,
+    upsert_turns_batch,
+    refresh_materialized_analytics_tables,
+)
 from ccwap.etl.extractor import extract_turn_data
 from ccwap.models.entities import TurnData, TokenUsage
 from ccwap.config.loader import load_config
@@ -290,6 +294,22 @@ class TestDailySummariesMaterialization(unittest.TestCase):
 
         conn.close()
         db_path.unlink()
+
+    def test_refresh_materialized_populates_loc_by_model(self):
+        """Materialized tool_calls aggregate should include LOC grouped by model."""
+        refresh_materialized_analytics_tables(self.conn)
+        self.conn.commit()
+
+        today_str = self.today.strftime('%Y-%m-%d')
+        row = self.conn.execute("""
+            SELECT COALESCE(SUM(loc_written), 0)
+            FROM tool_calls_agg_daily
+            WHERE date = ? AND model = 'claude-opus-4-5-20251101'
+        """, (today_str,)).fetchone()
+
+        # Today fixture has one Write with 50 LOC on Opus model.
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], 50)
 
 
 class TestDailySummariesEdgeCases(unittest.TestCase):

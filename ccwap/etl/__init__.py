@@ -11,10 +11,22 @@ import sqlite3
 from ccwap.config.loader import load_config, get_database_path, get_claude_projects_path
 from ccwap.models.schema import get_connection, ensure_database
 from ccwap.etl.parser import stream_jsonl, get_file_size
-from ccwap.etl.extractor import extract_turn_data, extract_tool_calls, extract_session_metadata
+from ccwap.etl.extractor import (
+    extract_turn_data,
+    extract_tool_calls,
+    extract_session_metadata,
+    is_agent_entry,
+)
 from ccwap.etl.validator import validate_entry
 from ccwap.etl.incremental import should_process_file, update_file_state
-from ccwap.etl.loader import upsert_session, upsert_turns_batch, upsert_tool_calls_batch, get_turn_id_by_uuid, materialize_daily_summaries
+from ccwap.etl.loader import (
+    upsert_session,
+    upsert_turns_batch,
+    upsert_tool_calls_batch,
+    get_turn_id_by_uuid,
+    materialize_daily_summaries,
+    refresh_materialized_analytics_tables,
+)
 from ccwap.utils.paths import (
     detect_file_type,
     extract_session_id_from_path,
@@ -163,13 +175,39 @@ def process_file(
     # the parent session metadata. Tool calls and turns are still inserted
     # and attributed to the parent session via session_id.
     is_nested_subagent = is_session_nested_subagent(file_path)
+    if is_nested_subagent:
+        # If parent session metadata is unavailable (e.g., parent JSONL already
+        # cleaned up), falling back to a standalone agent session avoids FK
+        # failures and preserves subagent activity.
+        parent_session_id = session_id
+        cursor = conn.execute(
+            "SELECT 1 FROM sessions WHERE session_id = ? LIMIT 1",
+            (parent_session_id,)
+        )
+        parent_exists = cursor.fetchone() is not None
+
+        if not parent_exists:
+            fallback_session_id = file_path.stem
+            if fallback_session_id.startswith('agent-'):
+                fallback_session_id = fallback_session_id[6:]
+
+            if fallback_session_id and fallback_session_id != parent_session_id:
+                session_id = fallback_session_id
+                file_type = 'subagent'
+                is_nested_subagent = False
+                for turn in turns:
+                    turn.session_id = session_id
 
     if not is_nested_subagent:
         # Extract session metadata
         metadata = extract_session_metadata(entries)
 
         # Create session object
-        is_agent = file_type in ('agent', 'subagent')
+        # File naming conventions are not always consistent; also detect
+        # agent sessions from entry content (sourceToolUseID on assistant turns).
+        is_agent = file_type in ('agent', 'subagent') or any(
+            is_agent_entry(entry) for entry in entries
+        )
 
         session = SessionData(
             session_id=session_id,
@@ -316,7 +354,7 @@ def run_etl(
             continue
         except Exception as e:
             # Log error but continue with next file
-            print(f"Warning: Error processing {file_path.name}: {e}")
+            print(f"Warning: Error processing {file_path}: {type(e).__name__}: {e}")
             conn.rollback()
             continue
 
@@ -335,6 +373,17 @@ def run_etl(
         stats['daily_summaries_updated'] = days_updated
         if verbose:
             print_status(f"Daily summaries: {days_updated} days updated")
+
+        # Keep materialized explorer/model aggregates in sync with canonical tables.
+        materialized_counts = refresh_materialized_analytics_tables(conn)
+        stats['materialized_aggregates'] = materialized_counts
+        if verbose:
+            print_status(
+                "Materialized aggregates: "
+                f"turns={materialized_counts.get('turns_agg_daily', 0)}, "
+                f"tools={materialized_counts.get('tool_calls_agg_daily', 0)}, "
+                f"sessions={materialized_counts.get('sessions_agg_daily', 0)}"
+            )
 
     conn.close()
 

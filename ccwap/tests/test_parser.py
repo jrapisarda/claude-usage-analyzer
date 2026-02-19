@@ -18,6 +18,8 @@ from ccwap.utils.paths import (
     decode_project_path,
     detect_file_type,
     extract_session_id_from_path,
+    get_project_path_from_file,
+    is_session_nested_subagent,
 )
 
 
@@ -415,6 +417,42 @@ class TestPathUtilities(unittest.TestCase):
             extract_session_id_from_path(Path('agent-abc123.jsonl')),
             'abc123'
         )
+
+    def test_extract_session_id_nested_subagent_any_filename(self):
+        """Nested subagent files should map to parent session ID regardless of filename."""
+        parent_session_id = '123e4567-e89b-12d3-a456-426614174000'
+        path = Path(f'/project/{parent_session_id}/subagents/unit-test-writer.jsonl')
+        self.assertEqual(
+            extract_session_id_from_path(path),
+            parent_session_id
+        )
+
+    def test_extract_session_id_legacy_subagent_dir_not_misclassified(self):
+        """Legacy <project>/subagents/agent-*.jsonl should not use project dir as session ID."""
+        project_name = 'my-very-long-project-name-with-hyphens-123456789012345'
+        path = Path(f'/root/{project_name}/subagents/agent-a11e909.jsonl')
+        self.assertEqual(
+            extract_session_id_from_path(path),
+            'a11e909'
+        )
+
+    def test_is_session_nested_subagent_false_for_legacy_subagent_dir(self):
+        """Legacy <project>/subagents files are not session-nested subagents."""
+        project_name = 'my-very-long-project-name-with-hyphens-123456789012345'
+        path = Path(f'/root/{project_name}/subagents/agent-a11e909.jsonl')
+        self.assertFalse(is_session_nested_subagent(path))
+
+    def test_is_session_nested_subagent_true_for_session_uuid_dir(self):
+        """<project>/<session-uuid>/subagents files are session-nested subagents."""
+        parent_session_id = '123e4567-e89b-12d3-a456-426614174000'
+        path = Path(f'/root/project/{parent_session_id}/subagents/unit-test-writer.jsonl')
+        self.assertTrue(is_session_nested_subagent(path))
+
+    def test_get_project_path_from_file_legacy_subagent_dir(self):
+        """Legacy subagent files should resolve project path to project dir name."""
+        project_name = 'my-very-long-project-name-with-hyphens-123456789012345'
+        path = Path(f'/root/{project_name}/subagents/agent-a11e909.jsonl')
+        self.assertEqual(get_project_path_from_file(path), project_name)
 
 
 class TestErrorCategorization(unittest.TestCase):

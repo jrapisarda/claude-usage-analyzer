@@ -4,9 +4,24 @@ Path utilities for CCWAP.
 Handles project path encoding/decoding and file type detection.
 """
 
+import re
 import urllib.parse
 from pathlib import Path
 from typing import Optional
+
+
+_SESSION_ID_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _looks_like_session_id(name: str) -> bool:
+    """
+    Check if a directory name matches the expected Claude session UUID format.
+
+    This avoids misclassifying long hyphenated project directory names as session IDs.
+    """
+    return bool(_SESSION_ID_PATTERN.match(name))
 
 
 def decode_project_path(encoded: str) -> str:
@@ -66,7 +81,7 @@ def is_session_nested_subagent(file_path: Path) -> bool:
     if file_path.parent.name != 'subagents':
         return False
     parent_dir = file_path.parent.parent.name
-    return '-' in parent_dir and len(parent_dir) > 30
+    return _looks_like_session_id(parent_dir)
 
 
 def detect_file_type(file_path: Path) -> str:
@@ -101,7 +116,7 @@ def extract_session_id_from_path(file_path: Path) -> str:
 
     Main sessions: {uuid}.jsonl
     Agent sessions: agent-{uuid}.jsonl
-    Session subagents: <session-id>/subagents/agent-{agent-id}.jsonl
+    Session subagents: <session-id>/subagents/<subagent-file>.jsonl
         -> returns <session-id> (parent session) so tool calls are attributed correctly
 
     Args:
@@ -112,14 +127,15 @@ def extract_session_id_from_path(file_path: Path) -> str:
     """
     name = file_path.stem  # filename without extension
 
+    # Session-nested subagents should always map to the parent session ID,
+    # regardless of subagent filename conventions.
+    if file_path.parent.name == 'subagents':
+        parent_dir = file_path.parent.parent.name
+        # Only treat as nested subagent when parent is a true session UUID.
+        if _looks_like_session_id(parent_dir):
+            return parent_dir
+
     if name.startswith('agent-'):
-        # Check if this is a subagent nested under a session directory
-        # Pattern: <project>/<session-id>/subagents/agent-xxx.jsonl
-        if file_path.parent.name == 'subagents':
-            parent_dir = file_path.parent.parent.name
-            # If parent dir looks like a UUID session ID (contains hyphens, not a project path)
-            if '-' in parent_dir and len(parent_dir) > 30:
-                return parent_dir  # Use parent session ID
         return name[6:]  # Remove 'agent-' prefix
 
     return name
@@ -143,8 +159,8 @@ def get_project_path_from_file(file_path: Path) -> str:
     # Handle subagents directory
     if file_path.parent.name == 'subagents':
         grandparent = file_path.parent.parent
-        # Check if grandparent is a session dir (UUID-like) nested under the project dir
-        if '-' in grandparent.name and len(grandparent.name) > 30:
+        # Check if grandparent is a true session UUID nested under project dir.
+        if _looks_like_session_id(grandparent.name):
             return grandparent.parent.name  # Go up one more level to project
         return grandparent.name
 

@@ -17,37 +17,61 @@ async def get_project_detail(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Get detailed project data. Uses separate queries to avoid cross-products."""
-    conditions = ["s.project_path = ?"]
-    params = [project_path]
-    date_params: list = []
-    date_clause = build_date_filter("s.first_timestamp", date_from, date_to, date_params)
-    if date_clause:
-        conditions.append(date_clause.lstrip(" AND "))
-        params.extend(date_params)
-    where = f"WHERE {' AND '.join(conditions)}"
+    """Get detailed project data, filtering by activity timestamps in-range."""
+    turn_date_params: list = []
+    turn_date_filter = build_date_filter("t.timestamp", date_from, date_to, turn_date_params)
+    tool_date_params: list = []
+    tool_date_filter = build_date_filter("tc.timestamp", date_from, date_to, tool_date_params)
 
     # Query 1: Session summary + sessions list
+    # Candidate sessions are those with turns/tool calls in the requested range.
     session_query = f"""
+        WITH turn_agg AS (
+            SELECT
+                t.session_id,
+                SUM(t.cost) AS total_cost,
+                COUNT(*) AS turn_count,
+                MAX(t.timestamp) AS last_turn_ts
+            FROM turns t
+            JOIN sessions s ON s.session_id = t.session_id
+            WHERE s.project_path = ? {turn_date_filter}
+            GROUP BY t.session_id
+        ),
+        tool_agg AS (
+            SELECT
+                tc.session_id,
+                SUM(tc.loc_written) AS loc_written,
+                MAX(tc.timestamp) AS last_tool_ts
+            FROM tool_calls tc
+            JOIN sessions s ON s.session_id = tc.session_id
+            WHERE s.project_path = ? {tool_date_filter}
+            GROUP BY tc.session_id
+        ),
+        candidate_sessions AS (
+            SELECT session_id FROM turn_agg
+            UNION
+            SELECT session_id FROM tool_agg
+        )
         SELECT
             s.session_id,
             s.project_display,
             s.first_timestamp,
-            COALESCE((SELECT SUM(t.cost) FROM turns t
-                      WHERE t.session_id = s.session_id), 0) as total_cost,
-            (SELECT COUNT(*) FROM turns t
-             WHERE t.session_id = s.session_id) as turn_count,
-            COALESCE((SELECT SUM(tc.loc_written) FROM tool_calls tc
-                      WHERE tc.session_id = s.session_id), 0) as loc_written,
+            COALESCE(ta.total_cost, 0) AS total_cost,
+            COALESCE(ta.turn_count, 0) AS turn_count,
+            COALESCE(tca.loc_written, 0) AS loc_written,
             (SELECT t.model FROM turns t WHERE t.session_id = s.session_id
              AND t.model IS NOT NULL AND t.model NOT LIKE '<%'
-             ORDER BY t.timestamp DESC LIMIT 1) as model_default,
-            s.git_branch
+             ORDER BY t.timestamp DESC LIMIT 1) AS model_default,
+            s.git_branch,
+            COALESCE(ta.last_turn_ts, tca.last_tool_ts, s.first_timestamp) AS last_activity_ts
         FROM sessions s
-        {where}
-        ORDER BY s.first_timestamp DESC
+        JOIN candidate_sessions cs ON cs.session_id = s.session_id
+        LEFT JOIN turn_agg ta ON ta.session_id = s.session_id
+        LEFT JOIN tool_agg tca ON tca.session_id = s.session_id
+        ORDER BY last_activity_ts DESC
     """
-    cursor = await db.execute(session_query, params)
+    session_params = [project_path, *turn_date_params, project_path, *tool_date_params]
+    cursor = await db.execute(session_query, session_params)
     session_rows = await cursor.fetchall()
 
     if not session_rows:
@@ -67,57 +91,56 @@ async def get_project_detail(
         "model_default": r[6],
     } for r in session_rows[:50]]
 
-    # Query 2: Cost trend by date
+    # Query 2: Cost trend by activity date
     cost_query = f"""
         SELECT
-            date(s.first_timestamp, 'localtime') as date,
-            COALESCE(SUM(turn_agg.cost), 0) as cost
-        FROM sessions s
-        LEFT JOIN (
-            SELECT session_id, SUM(cost) as cost
-            FROM turns
-            GROUP BY session_id
-        ) turn_agg ON turn_agg.session_id = s.session_id
-        {where}
-        GROUP BY date(s.first_timestamp, 'localtime')
-        ORDER BY date(s.first_timestamp, 'localtime')
+            date(t.timestamp, 'localtime') AS date,
+            COALESCE(SUM(t.cost), 0) AS cost
+        FROM turns t
+        JOIN sessions s ON s.session_id = t.session_id
+        WHERE s.project_path = ? {turn_date_filter}
+        GROUP BY date(t.timestamp, 'localtime')
+        ORDER BY date(t.timestamp, 'localtime')
     """
-    cursor = await db.execute(cost_query, params)
+    cost_params = [project_path, *turn_date_params]
+    cursor = await db.execute(cost_query, cost_params)
     cost_rows = await cursor.fetchall()
     cost_trend = [{"date": r[0], "cost": round(float(r[1] or 0), 6)} for r in cost_rows]
 
-    # Query 3: Languages from tool_calls (separate query)
-    session_ids = [r[0] for r in session_rows]
-    placeholders = ",".join(["?"] * len(session_ids))
+    # Query 3: Languages from tool_calls (activity in range)
     lang_query = f"""
         SELECT
-            COALESCE(tc.language, 'unknown') as language,
-            SUM(tc.loc_written) as loc_written
+            COALESCE(tc.language, 'unknown') AS language,
+            SUM(tc.loc_written) AS loc_written
         FROM tool_calls tc
-        WHERE tc.session_id IN ({placeholders})
+        JOIN sessions s ON s.session_id = tc.session_id
+        WHERE s.project_path = ? {tool_date_filter}
             AND tc.language IS NOT NULL
             AND tc.loc_written > 0
         GROUP BY language
         ORDER BY loc_written DESC
         LIMIT 15
     """
-    cursor = await db.execute(lang_query, session_ids)
+    lang_params = [project_path, *tool_date_params]
+    cursor = await db.execute(lang_query, lang_params)
     lang_rows = await cursor.fetchall()
     languages = [{"language": r[0], "loc_written": int(r[1] or 0)} for r in lang_rows]
 
-    # Query 4: Tools from tool_calls (separate query)
+    # Query 4: Tools from tool_calls (activity in range)
     tool_query = f"""
         SELECT
             tc.tool_name,
-            COUNT(*) as count,
-            AVG(CASE WHEN tc.success THEN 1.0 ELSE 0.0 END) as success_rate
+            COUNT(*) AS count,
+            AVG(CASE WHEN tc.success THEN 1.0 ELSE 0.0 END) AS success_rate
         FROM tool_calls tc
-        WHERE tc.session_id IN ({placeholders})
+        JOIN sessions s ON s.session_id = tc.session_id
+        WHERE s.project_path = ? {tool_date_filter}
         GROUP BY tc.tool_name
         ORDER BY count DESC
         LIMIT 15
     """
-    cursor = await db.execute(tool_query, session_ids)
+    tool_params = [project_path, *tool_date_params]
+    cursor = await db.execute(tool_query, tool_params)
     tool_rows = await cursor.fetchall()
     tools = [{
         "tool_name": r[0],
