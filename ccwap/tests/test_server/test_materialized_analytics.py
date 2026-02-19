@@ -85,3 +85,27 @@ async def test_query_explorer_materialized_matches_raw(async_db, metric, group_b
     assert mat_meta["groups"] == raw_meta["groups"]
     assert mat_meta["splits"] == raw_meta["splits"]
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_materialized", [False, True])
+async def test_query_explorer_loc_written_respects_model_filter(async_db, use_materialized):
+    if use_materialized:
+        await refresh_materialized_analytics(async_db)
+
+    rows, metadata = await query_explorer(
+        async_db,
+        metric="loc_written",
+        group_by="project",
+        date_from="2026-02-03",
+        date_to="2026-02-05",
+        models=["claude-sonnet-4-20250514"],
+        use_materialized=use_materialized,
+    )
+
+    by_project = {r["group"]: round(float(r["value"]), 6) for r in rows}
+
+    # Sonnet turns in fixture data map to:
+    # - proj-alpha: 20 LOC (sess-002, Edit)
+    # - proj-beta: 40 LOC (sess-004, Write)
+    assert by_project == {"proj-alpha": 20.0, "proj-beta": 40.0}
+    assert round(float(metadata["total"]), 6) == 60.0

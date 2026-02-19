@@ -266,8 +266,12 @@ async def _query_tool_metric(
     params: list = []
     agg = _TOOL_AGG[metric]
 
-    # Determine if we need turns join (for model, entry_type dimensions)
-    needs_turns = group_by in ("model", "entry_type") or split_by in ("model", "entry_type")
+    # Determine if we need turns join (for model/entry_type dimensions or model filter).
+    needs_turns = (
+        group_by in ("model", "entry_type")
+        or split_by in ("model", "entry_type")
+        or bool(models)
+    )
 
     group_col = _TOOL_DIM_COLS[group_by]
     select_cols = f"{group_col} AS grp"
@@ -443,16 +447,12 @@ async def _query_tool_metric_materialized(
         select_cols += f", {split_col} AS spl"
         group_clause += ", spl"
 
-    # Keep behavior aligned with raw query path.
-    needs_turns = group_by in ("model", "entry_type") or split_by in ("model", "entry_type")
-
     filters = ""
     if group_by == "model" or split_by == "model":
         filters += " AND a.model != 'unknown' AND a.model NOT LIKE '<%'"
     filters += _build_summary_date_filter(date_from, date_to, params)
     filters += _build_list_filter("a.project", projects, params)
-    if needs_turns:
-        filters += _build_list_filter("a.model", models, params)
+    filters += _build_list_filter("a.model", models, params)
     filters += _build_list_filter("a.branch", branches, params)
     filters += _build_list_filter("a.language", languages, params)
 
